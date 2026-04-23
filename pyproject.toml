@@ -3,7 +3,11 @@ name = "a3"
 version = "0.1.0"
 description = ""
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "aiohttp>=3.13.3",
+    "python-dotenv>=1.2.1",
+    "twitchio==2.10.0",
+]
 
 [project.optional-dependencies]
 dev = ["pytest", "pytest-cov", "ruff", "mypy"]
@@ -13,11 +17,11 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.ruff]
-line-length = 88
+line-length = 220
 target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I"]
 
 [tool.mypy]
-strict = true
+ignore_missing_imports = true

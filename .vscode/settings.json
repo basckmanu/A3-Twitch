@@ -1,0 +1,7 @@
+{
+  "python.defaultInterpreterPath": "",
+  "editor.formatOnSave": true,
+  "[python]": {
+    "editor.defaultFormatter": "charliermarsh.ruff"
+  }
+}
