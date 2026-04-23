@@ -59,18 +59,22 @@ def setup_logging() -> logging.Logger:
 
 
 class TwitchBot(commands.Bot):
-    def __init__(self, logger: logging.Logger) -> None:
-        super().__init__(token=TOKEN, prefix="?", initial_channels=CHANNELS)
+    def __init__(self, logger: logging.Logger, single_channel: str | None = None) -> None:
+        self._target_channel = single_channel
+        channels = [single_channel] if single_channel else CHANNELS
+        super().__init__(token=TOKEN, prefix="?", initial_channels=channels)
 
         self.log = logger
-        self.capture = StreamCapture(channel=CHANNELS[0])
+        channel = channels[0]
+        self.capture = StreamCapture(channel=channel)
         self.watcher = Watcher()
         self.decision_logger = DecisionLogger()
-        self.brain = Brain(logger=logger, decision_logger=self.decision_logger)
-        self.renderer = Renderer(decision_logger=self.decision_logger)
+        self.decision_logger._start_cleanup()
+        self.brain = Brain(logger=logger, decision_logger=self.decision_logger, channel=channel)
+        self.renderer = Renderer(decision_logger=self.decision_logger, struct_log=self.brain._struct_log)
 
     async def event_ready(self) -> None:
-        channels_str = ", ".join(CHANNELS)
+        channels_str = ", ".join(self._target_channel or CHANNELS)
         self.log.info(f"👀 BOT ACTIVÉ : Connecté au chat de {channels_str}")
         self.log.info("-" * 50)
 

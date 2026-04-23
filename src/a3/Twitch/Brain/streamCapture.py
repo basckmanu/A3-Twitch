@@ -208,41 +208,48 @@ class StreamCapture:
         ]
 
         loop = asyncio.get_event_loop()
-        try:
-            await asyncio.wait_for(
-                loop.run_in_executor(None, lambda: subprocess.run(cmd_main, timeout=300)),
-                timeout=320,
-            )
-        except asyncio.TimeoutError:
-            logger.error("[StreamCapture] ⏱️ timeout ffmpeg clip principal (300s)")
+
+        # Lancer les deux ffmpeg en parallèle
+        async def _run_ffmpeg(cmd: list[str], timeout_s: int, label: str) -> bool:
+            try:
+                await asyncio.wait_for(
+                    loop.run_in_executor(None, lambda: subprocess.run(cmd, timeout=timeout_s)),
+                    timeout=timeout_s + 20,
+                )
+                return True
+            except asyncio.TimeoutError:
+                logger.error(f"[StreamCapture] ⏱️ timeout ffmpeg {label} ({timeout_s}s)")
+                return False
+
+        # Les deux ffmpeg en parallèle (chacun écrit dans DOSSIER_CLIPS)
+        results = await asyncio.gather(
+            _run_ffmpeg(cmd_main, 300, "clip principal"),
+            _run_ffmpeg(cmd_preview, 300, "previews"),
+        )
+
+        ok_main = results[0]
+
+        if not ok_main:
+            logger.error("[StreamCapture] ❌ Échec génération clip principal")
+            try:
+                chemin_liste.unlink()
+            except Exception:
+                pass
             return None
+
+        taille_mb = chemin_sortie.stat().st_size / 1024 / 1024
+        print(f"[StreamCapture] ✅ Clip HQ généré: {chemin_sortie} ({taille_mb:.1f} MB)")
+
+        previews = [p for p in DOSSIER_CLIPS.iterdir() if p.name.startswith(f"preview_{nom_stem}_") and p.suffix == ".mp4"]
+        previews.sort()
+        print(f"[StreamCapture] 🔍 {len(previews)} morceau(x) de preview trouvé(s)")
 
         try:
             chemin_liste.unlink()
         except Exception:
             pass
 
-        if chemin_sortie.exists() and chemin_sortie.stat().st_size > 0:
-            taille_mb = chemin_sortie.stat().st_size / 1024 / 1024
-            print(f"[StreamCapture] ✅ Clip HQ généré: {chemin_sortie} ({taille_mb:.1f} MB)")
-
-            print("[StreamCapture] 🎥 Création des previews Discord (parties de 60s)...")
-            try:
-                await asyncio.wait_for(
-                    loop.run_in_executor(None, lambda: subprocess.run(cmd_preview, timeout=300)),
-                    timeout=320,
-                )
-            except asyncio.TimeoutError:
-                logger.error("[StreamCapture] ⏱️ timeout ffmpeg previews (300s)")
-
-            # Recherche manuelle robuste (anti-fail glob)
-            previews = [p for p in DOSSIER_CLIPS.iterdir() if p.name.startswith(f"preview_{nom_stem}_") and p.suffix == ".mp4"]
-            previews.sort()
-            print(f"[StreamCapture] 🔍 {len(previews)} morceau(x) de preview trouvé(s) sur le disque")
-
-            return {"hq": chemin_sortie, "previews": previews}
-        else:
-            return None
+        return {"hq": chemin_sortie, "previews": previews}
 
     def etat_buffer(self) -> dict:
         if not self.buffer:

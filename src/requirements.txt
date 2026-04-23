@@ -1,0 +1,4 @@
+aiohttp>=3.13.3
+python-dotenv>=1.2.1
+twitchio==2.10.0
+discord.py>=2.0.0

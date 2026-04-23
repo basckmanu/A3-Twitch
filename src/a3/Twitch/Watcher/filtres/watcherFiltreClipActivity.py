@@ -62,8 +62,51 @@ class FiltreClipActivity:
         """Démarre le polling en arrière-plan."""
         self._session = aiohttp.ClientSession()
         await self._renouveler_token()
+        # Pre-seeding : peupler _clips_vus avec les clips déjà existants
+        await self._preSeeder_clips()
         self._poll_task = asyncio.create_task(self._boucle_poll())
         print(f"[ClipActivity] ✅ Polling démarré — seuil: {self.seuil_clips} clips / {self.fenetre_sec}s")
+
+    async def _preSeeder_clips(self) -> None:
+        """Au premier démarrage, récupère les clips existants dans la fenêtre
+        pour ne pas rater ceux créés juste avant le démarrage du bot."""
+        from datetime import datetime, timezone
+
+        assert self._session is not None, "Session non initialisée"
+        maintenant = time.time()
+        started_at = datetime.fromtimestamp(maintenant - self.fenetre_sec, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        headers = {
+            "Authorization": f"Bearer {self._app_token}",
+            "Client-Id": self.client_id,
+        }
+        params: dict[str, str | int] = {
+            "broadcaster_id": self.channel_id,
+            "started_at": started_at,
+            "first": 20,
+        }
+
+        try:
+            async with self._session.get(
+                "https://api.twitch.tv/helix/clips",
+                headers=headers,
+                params=params,
+            ) as resp:
+                if resp.status == 401:
+                    await self._renouveler_token()
+                    return
+                if resp.status != 200:
+                    return
+                data = await resp.json()
+
+            clips = data.get("data", [])
+            for clip in clips:
+                self._clips_vus.add(clip["id"])
+
+            if clips:
+                print(f"[ClipActivity] 📎 Pre-seeding: {len(clips)} clips existants déjà enregistrés")
+        except Exception as e:
+            print(f"[ClipActivity] ⚠️ Pre-seeding échoué: {e}")
 
     async def arreter(self) -> None:
         if self._poll_task:

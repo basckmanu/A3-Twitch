@@ -1,11 +1,14 @@
 # src/a3/Twitch/Brain/mainBrainTwitch.py
 
 import asyncio
+import hashlib
 import logging
 import os
 import time
-from collections import Counter
+from collections import Counter, deque
 from datetime import datetime
+
+from a3.Twitch.Brain.structuredLogger import EventType, StructuredLogger
 
 log = logging.getLogger("A3")
 
@@ -50,12 +53,15 @@ class Brain:
         poids: dict[str, float] | None = None,
         logger: logging.Logger | None = None,
         decision_logger=None,
+        channel: str = "unknown",
     ) -> None:
         self.seuil = seuil
         self.poids = poids or POIDS_FILTRES
         self.capture = None
         self.renderer = None
         self.decision_logger = decision_logger
+        self.channel = channel
+        self._struct_log = StructuredLogger(channel=channel)
 
         self.clips_detectes: int = 0
         self.clips_rejetes: int = 0
@@ -74,10 +80,19 @@ class Brain:
         self._donnees_initiales: dict | None = None
         self._score_max_clip: float = 0.0
 
+        # Deduplication : garde les hashes des moments récents (60s)
+        self._moments_recents: deque[tuple[float, str]] = deque()
+        self._fenetre_dedup_sec: float = 60.0
+
     async def start(self, capture=None, renderer=None) -> None:
         self.capture = capture
         self.renderer = renderer
         self.debut_live = datetime.now()
+        self._struct_log.log_event(EventType.SESSION_START, {
+            "channel": self.channel,
+            "seuil": self.seuil,
+            "poids": self.poids,
+        })
         poids_str = " | ".join(f"{k}: {v}" for k, v in self.poids.items())
         log.info(f"[Brain] 🧠 Démarré — seuil: {self.seuil} | mode: Élastique (TikTok >{DUREE_MIN_TIKTOK_SEC}s) | poids: {poids_str}")
         log.info(f"[Brain] {'✅ StreamCapture actif' if capture else '⚠️  pas de capture vidéo'}")
@@ -121,6 +136,13 @@ class Brain:
         if not volume_ok:
             return None
 
+        # ── Deduplication ──────────────────────────────────────────
+        moment_hash = self._hash_moment(message, détails)
+        maintenant = time.time()
+        if self._est_duplicate(moment_hash, maintenant):
+            self._log_rejet(message, score_final, détails, "moment déjà capturé (dedup)")
+            return None
+
         if score_final < self.seuil:
             self.clips_rejetes += 1
             self._log_rejet(message, score_final, détails, "score insuffisant")
@@ -152,6 +174,15 @@ class Brain:
         self.is_recording = True
         self._score_max_clip = score_final
 
+        auteur = message.author.name if message else ""
+        self._struct_log.log_clip_detected(
+            clip_num=self.clips_detectes,
+            score=score_final,
+            détails=détails,
+            auteur=auteur,
+            message=message.content if message else "",
+        )
+
         self._ts_debut_record = maintenant - DECALAGE_RECORD_AVANT_SEC
         self._ts_fin_attendue = maintenant + DUREE_ATTENTE_HYPE_SEC
         self._donnees_initiales = données.copy()
@@ -161,6 +192,28 @@ class Brain:
         asyncio.create_task(self._processus_fin_clip())
 
         return données
+
+    def _hash_moment(self, message, détails: dict) -> str:
+        """Génère un hash du moment (auteur + filtres actifs) pour la dedup."""
+        auteur = message.author.name if message else ""
+        filtres_actifs = tuple(sorted(k for k, v in détails.items() if v.get("score_pondéré", 0) > 0))
+        contenu = f"{auteur}|{filtres_actifs}".encode()
+        return hashlib.md5(contenu).hexdigest()[:16]
+
+    def _est_duplicate(self, moment_hash: str, ts: float) -> bool:
+        """Retourne True si un moment avec ce hash existe dans la fenêtre deduplication."""
+        # Purge les vieux
+        limite = ts - self._fenetre_dedup_sec
+        while self._moments_recents and self._moments_recents[0][0] < limite:
+            self._moments_recents.popleft()
+
+        # Vérifie si déjà vu
+        for _, h in self._moments_recents:
+            if h == moment_hash:
+                return True
+
+        self._moments_recents.append((ts, moment_hash))
+        return False
 
     def _annuler_dernier_clip(self) -> None:
         if self.historique:
@@ -218,9 +271,21 @@ class Brain:
                 donnees["chemin_clip"] = str(chemins["hq"])
                 liste_previews = chemins.get("previews", [])
                 donnees["chemins_previews"] = [str(p) for p in liste_previews]
+                self._struct_log.log_clip_generated(
+                    clip_num=self.clips_detectes,
+                    score=self._score_max_clip,
+                    chemin=str(chemins["hq"]),
+                    duree_sec=duree_calculee,
+                )
                 if liste_previews:
                     log.info(f"[Brain] 🎥 Transmission au Discord de {len(liste_previews)} aperçus découpés.")
             else:
+                self._struct_log.log_clip_generated(
+                    clip_num=self.clips_detectes,
+                    score=self._score_max_clip,
+                    chemin=None,
+                    duree_sec=duree_calculee,
+                )
                 log.warning("[Brain] ⚠️  Clip vidéo échoué — buffer insuffisant ?")
 
         # Log du clip dans decisions/

@@ -1,0 +1,42 @@
+# docker/docker-compose.yml
+# Usage: docker compose -f docker/docker-compose.yml up
+#
+# Variables d'environnement à définir dans .env (non commité):
+#   TOKEN_TWITCH, CLIENT_ID, CLIENT_SECRET, DISCORD_BOT_TOKEN,
+#   DISCORD_CHANNEL_ID, CHANNELS, CHANNEL_ID
+
+services:
+  a3:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: a3-twitch
+    restart: unless-stopped
+    env_file:
+      - ../.env
+    volumes:
+      # Montage des dossiers pour persister les clips et logs
+      - a3_clips:/app/clips_output
+      - a3_validated:/app/clips_validated
+      - a3_highlights:/app/clips_highlights
+      - a3_rejected:/app/clips_rejected
+      - a3_decisions:/app/decisions
+      - a3_logs:/app/logs
+      - a3_cache:/app/cache
+    environment:
+      - PYTHONUNBUFFERED=1
+    # Permet d'accéder au stream (network_mode: host nécessaire pour streamlink)
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+volumes:
+  a3_clips:
+  a3_validated:
+  a3_highlights:
+  a3_rejected:
+  a3_decisions:
+  a3_logs:
+  a3_cache:

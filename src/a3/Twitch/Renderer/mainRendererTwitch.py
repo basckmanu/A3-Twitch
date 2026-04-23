@@ -57,12 +57,14 @@ class ClipView(discord.ui.View):
         clip_num: int,
         decision_logger=None,
         mot_repetition: str | None = None,
+        structured_logger=None,
     ) -> None:
         super().__init__(timeout=None)
         self.chemin_clip = Path(chemin_clip) if chemin_clip else None
         self.clip_num = clip_num
         self.decision_logger = decision_logger
         self.mot_repetition = mot_repetition
+        self._struct_log = structured_logger
 
     @discord.ui.button(label="✅ Garder", style=discord.ButtonStyle.success, custom_id="garder")
     async def garder(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
@@ -73,6 +75,8 @@ class ClipView(discord.ui.View):
         if chemin_dest:
             if self.decision_logger:
                 self.decision_logger.log_decision(self.clip_num, "garder", interaction.user.name)
+            if self._struct_log:
+                self._struct_log.log_review(self.clip_num, "garder", interaction.user.name)
             await interaction.response.edit_message(
                 content=(interaction.message.content if interaction.message else "") + f"\n\n✅ **Gardé** par {interaction.user.name} → `{chemin_dest}`",
                 view=None,
@@ -90,6 +94,8 @@ class ClipView(discord.ui.View):
         if chemin_dest:
             if self.decision_logger:
                 self.decision_logger.log_decision(self.clip_num, "highlight", interaction.user.name)
+            if self._struct_log:
+                self._struct_log.log_review(self.clip_num, "highlight", interaction.user.name)
             await interaction.response.edit_message(
                 content=(interaction.message.content if interaction.message else "") + f"\n\n⭐ **Highlight** par {interaction.user.name} → `{chemin_dest}`",
                 view=None,
@@ -105,6 +111,8 @@ class ClipView(discord.ui.View):
             return
         if self.decision_logger:
             self.decision_logger.log_decision(self.clip_num, "supprimer", interaction.user.name)
+        if self._struct_log:
+            self._struct_log.log_review(self.clip_num, "supprimer", interaction.user.name)
         self._supprimer()
         if interaction.message:
             await interaction.message.delete()
@@ -131,12 +139,13 @@ class ClipView(discord.ui.View):
 
 
 class Renderer:
-    def __init__(self, decision_logger=None) -> None:
+    def __init__(self, decision_logger=None, struct_log=None) -> None:
         self._client: discord.Client | None = None
         self._channel: discord.TextChannel | None = None
         self._ready = asyncio.Event()
         self._clip_counter: int = 0
         self.decision_logger = decision_logger
+        self._struct_log = struct_log
 
     async def start(self) -> None:
         intents = discord.Intents.default()
@@ -201,6 +210,7 @@ class Renderer:
             clip_num=clip_num,
             decision_logger=self.decision_logger,
             mot_repetition=mot_rep,
+            structured_logger=self._struct_log if hasattr(self, "_struct_log") else None,
         )
 
         if previews:
