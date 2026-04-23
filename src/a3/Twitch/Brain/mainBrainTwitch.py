@@ -14,7 +14,7 @@ log = logging.getLogger("A3")
 # ------------------------------------------------------------------ #
 
 POIDS_FILTRES: dict[str, float] = {
-    "FiltreMessageRate": 0.25,
+    "FiltreMessageRate": 0.30,
     "FiltreUniqueAuthors": 0.35,
     "FiltreEmotions": 0.25,
     "FiltreEmoteDensity": 0.20,
