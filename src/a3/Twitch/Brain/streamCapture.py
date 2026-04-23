@@ -12,12 +12,13 @@ from pathlib import Path
 
 logger = logging.getLogger("A3.StreamCapture")
 
+_BASE = Path(__file__).resolve().parents[4]
 BUFFER_DUREE_MAX_SEC = 360
 DUREE_SEGMENT_SEC = 30
 DELAI_CHAT_VIDEO_SEC = 8
 QUALITE_STREAM = "best"
-DOSSIER_SEGMENTS = Path("buffer_segments")
-DOSSIER_CLIPS = Path("clips_output")
+DOSSIER_SEGMENTS = _BASE / "buffer_segments"
+DOSSIER_CLIPS = _BASE / "clips_output"
 
 
 @dataclass
@@ -37,6 +38,7 @@ class StreamCapture:
         self.channel = channel
         self.url_stream = f"https://www.twitch.tv/{channel}"
         self.buffer: deque[Segment] = deque()
+        self._lock = threading.Lock()
         self._actif = False
         self._thread: threading.Thread | None = None
         self._surveillance_task: asyncio.Task | None = None
@@ -87,8 +89,8 @@ class StreamCapture:
         try:
             proc_sl.kill()
             proc_ff.kill()
-        except:  # noqa: E722
-            pass
+        except Exception as e:
+            logger.debug(f"[StreamCapture] Processus déjà arrêtés: {e}")
 
     async def _surveiller_nouveaux_segments(self):
         vus = set()
@@ -105,8 +107,8 @@ class StreamCapture:
                             vus.add(fichier)
                             self._enregistrer_segment(fichier)
                 self._purger_vieux_segments()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"[StreamCapture] Surveillance erreur: {e}")
             await asyncio.sleep(5)
 
     def _enregistrer_segment(self, chemin: Path):
@@ -116,26 +118,29 @@ class StreamCapture:
             dt = datetime.strptime(f"{parties[1]}_{parties[2]}", "%Y%m%d_%H%M%S")
             ts_debut = dt.timestamp()
             segment = Segment(chemin, ts_debut, ts_debut + DUREE_SEGMENT_SEC, DUREE_SEGMENT_SEC)
-            self.buffer.append(segment)
+            with self._lock:
+                self.buffer.append(segment)
         except Exception:
-            pass
+            logger.warning(f"[StreamCapture] Segment ignoré (parse error): {chemin}")
 
     def _purger_vieux_segments(self):
         limite = time.time() - BUFFER_DUREE_MAX_SEC
-        while self.buffer and self.buffer[0].timestamp_fin < limite:
-            vieux = self.buffer.popleft()
-            try:
-                vieux.chemin.unlink()
-            except Exception:
-                pass
+        with self._lock:
+            while self.buffer and self.buffer[0].timestamp_fin < limite:
+                vieux = self.buffer.popleft()
+                try:
+                    vieux.chemin.unlink()
+                except Exception as e:
+                    logger.debug(f"[StreamCapture] Segment cleanup error: {e}")
 
     def _nettoyer_buffer_complet(self):
-        for seg in list(self.buffer):
-            try:
-                seg.chemin.unlink()
-            except Exception:
-                pass
-        self.buffer.clear()
+        with self._lock:
+            for seg in list(self.buffer):
+                try:
+                    seg.chemin.unlink()
+                except Exception as e:
+                    logger.debug(f"[StreamCapture] Segment cleanup error: {e}")
+            self.buffer.clear()
         for f in DOSSIER_SEGMENTS.glob("seg_*.ts"):
             try:
                 f.unlink()
@@ -145,11 +150,16 @@ class StreamCapture:
     # ── GÉNÉRATION DYNAMIQUE ─────────────────
 
     async def clip_dynamique(self, ts_debut: float, ts_fin: float, nom: str) -> dict | None:
+        if ".." in nom or "/" in nom or "\\" in nom:
+            logger.error(f"[StreamCapture] ⚠️ Nom de clip invalide (path traversal): {nom}")
+            return None
+
         ts_debut_reel = ts_debut - DELAI_CHAT_VIDEO_SEC
         ts_fin_reel = ts_fin - DELAI_CHAT_VIDEO_SEC
         duree_totale = ts_fin_reel - ts_debut_reel
 
-        segments_necessaires = [s for s in self.buffer if s.timestamp_fin > ts_debut_reel and s.timestamp_debut < ts_fin_reel]
+        with self._lock:
+            segments_necessaires = [s for s in self.buffer if s.timestamp_fin > ts_debut_reel and s.timestamp_debut < ts_fin_reel]
 
         if not segments_necessaires:
             return None
@@ -198,7 +208,14 @@ class StreamCapture:
         ]
 
         loop = asyncio.get_event_loop()
-        await loop.run_in_executor(None, lambda: subprocess.run(cmd_main))
+        try:
+            await asyncio.wait_for(
+                loop.run_in_executor(None, lambda: subprocess.run(cmd_main, timeout=300)),
+                timeout=320,
+            )
+        except asyncio.TimeoutError:
+            logger.error("[StreamCapture] ⏱️ timeout ffmpeg clip principal (300s)")
+            return None
 
         try:
             chemin_liste.unlink()
@@ -210,9 +227,15 @@ class StreamCapture:
             print(f"[StreamCapture] ✅ Clip HQ généré: {chemin_sortie} ({taille_mb:.1f} MB)")
 
             print("[StreamCapture] 🎥 Création des previews Discord (parties de 60s)...")
-            await loop.run_in_executor(None, lambda: subprocess.run(cmd_preview))
+            try:
+                await asyncio.wait_for(
+                    loop.run_in_executor(None, lambda: subprocess.run(cmd_preview, timeout=300)),
+                    timeout=320,
+                )
+            except asyncio.TimeoutError:
+                logger.error("[StreamCapture] ⏱️ timeout ffmpeg previews (300s)")
 
-            # 🟢 CORRECTION: Recherche manuelle robuste (anti-fail glob)
+            # Recherche manuelle robuste (anti-fail glob)
             previews = [p for p in DOSSIER_CLIPS.iterdir() if p.name.startswith(f"preview_{nom_stem}_") and p.suffix == ".mp4"]
             previews.sort()
             print(f"[StreamCapture] 🔍 {len(previews)} morceau(x) de preview trouvé(s) sur le disque")

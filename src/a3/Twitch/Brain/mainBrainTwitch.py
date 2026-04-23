@@ -24,6 +24,8 @@ POIDS_FILTRES: dict[str, float] = {
 
 SEUIL_CLIP: float = 0.45
 FILTRES_VOLUME = {"FiltreMessageRate", "FiltreUniqueAuthors"}
+DECALAGE_RECORD_AVANT_SEC = 45.0   # combien de secondes avant le trigger on commence à enregistrer
+DUREE_ATTENTE_HYPE_SEC = 15.0      # durée supplémentaire attendue après le dernier pic
 DUREE_MIN_TIKTOK_SEC: float = 65.0
 MERGE_WINDOW_SEC: int = 300
 
@@ -47,13 +49,13 @@ class Brain:
         seuil: float = SEUIL_CLIP,
         poids: dict[str, float] | None = None,
         logger: logging.Logger | None = None,
-        decision_logger=None,  # 🟢 NOUVEAU
+        decision_logger=None,
     ) -> None:
         self.seuil = seuil
         self.poids = poids or POIDS_FILTRES
         self.capture = None
         self.renderer = None
-        self.decision_logger = decision_logger  # 🟢 NOUVEAU
+        self.decision_logger = decision_logger
 
         self.clips_detectes: int = 0
         self.clips_rejetes: int = 0
@@ -108,7 +110,7 @@ class Brain:
 
         if self.is_recording:
             if score_final >= self.seuil:
-                nouveau_ts_fin = maintenant + 15.0
+                nouveau_ts_fin = maintenant + DUREE_ATTENTE_HYPE_SEC
                 if nouveau_ts_fin > self._ts_fin_attendue:
                     self._ts_fin_attendue = nouveau_ts_fin
                 if score_final > self._score_max_clip:
@@ -150,8 +152,8 @@ class Brain:
         self.is_recording = True
         self._score_max_clip = score_final
 
-        self._ts_debut_record = maintenant - 45.0
-        self._ts_fin_attendue = maintenant + 15.0
+        self._ts_debut_record = maintenant - DECALAGE_RECORD_AVANT_SEC
+        self._ts_fin_attendue = maintenant + DUREE_ATTENTE_HYPE_SEC
         self._donnees_initiales = données.copy()
 
         log.info(f"\n[Brain] 🔴 REC DÉMARRÉ (Clip #{self.clips_detectes}) — Attente de la fin de la hype...")
@@ -221,7 +223,7 @@ class Brain:
             else:
                 log.warning("[Brain] ⚠️  Clip vidéo échoué — buffer insuffisant ?")
 
-        # 🟢 Log du clip dans decisions/
+        # Log du clip dans decisions/
         if self.decision_logger:
             self.decision_logger.log_clip(
                 clip_num=self.clips_detectes,

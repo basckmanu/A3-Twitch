@@ -18,6 +18,7 @@ log = logging.getLogger("A3")
 
 DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 DISCORD_CHANNEL_ID = int(os.getenv("DISCORD_CHANNEL_ID", "0"))
+DISCORD_ALLOWED_USERS = {uid.strip() for uid in os.getenv("DISCORD_ALLOWED_USERS", "").split(",") if uid.strip()}
 
 DOSSIER_VALIDATED = Path("clips_validated")
 DOSSIER_HIGHLIGHTS = Path("clips_highlights")
@@ -38,7 +39,9 @@ def charger_blacklist() -> set[str]:
     try:
         with open(FICHIER_BLACKLIST, encoding="utf-8") as f:
             return set(json.load(f))
-    except Exception:
+    except Exception as e:
+        import logging
+        logging.getLogger("A3").warning(f"[Renderer] ⚠️ Blacklist load failed: {e}")
         return set()
 
 
@@ -63,12 +66,15 @@ class ClipView(discord.ui.View):
 
     @discord.ui.button(label="✅ Garder", style=discord.ButtonStyle.success, custom_id="garder")
     async def garder(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        if DISCORD_ALLOWED_USERS and interaction.user.id not in DISCORD_ALLOWED_USERS:
+            await interaction.response.send_message("⛔ Pas autorisé.", ephemeral=True)
+            return
         chemin_dest = self._deplacer(DOSSIER_VALIDATED)
         if chemin_dest:
             if self.decision_logger:
                 self.decision_logger.log_decision(self.clip_num, "garder", interaction.user.name)
             await interaction.response.edit_message(
-                content=interaction.message.content + f"\n\n✅ **Gardé** par {interaction.user.name} → `{chemin_dest}`",
+                content=(interaction.message.content if interaction.message else "") + f"\n\n✅ **Gardé** par {interaction.user.name} → `{chemin_dest}`",
                 view=None,
             )
             log.info(f"[Renderer] ✅ Clip #{self.clip_num} gardé → {chemin_dest}")
@@ -77,12 +83,15 @@ class ClipView(discord.ui.View):
 
     @discord.ui.button(label="⭐ Highlight", style=discord.ButtonStyle.primary, custom_id="highlight")
     async def highlight(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        if DISCORD_ALLOWED_USERS and interaction.user.id not in DISCORD_ALLOWED_USERS:
+            await interaction.response.send_message("⛔ Pas autorisé.", ephemeral=True)
+            return
         chemin_dest = self._deplacer(DOSSIER_HIGHLIGHTS)
         if chemin_dest:
             if self.decision_logger:
                 self.decision_logger.log_decision(self.clip_num, "highlight", interaction.user.name)
             await interaction.response.edit_message(
-                content=interaction.message.content + f"\n\n⭐ **Highlight** par {interaction.user.name} → `{chemin_dest}`",
+                content=(interaction.message.content if interaction.message else "") + f"\n\n⭐ **Highlight** par {interaction.user.name} → `{chemin_dest}`",
                 view=None,
             )
             log.info(f"[Renderer] ⭐ Clip #{self.clip_num} marqué highlight → {chemin_dest}")
@@ -91,10 +100,14 @@ class ClipView(discord.ui.View):
 
     @discord.ui.button(label="🗑️ Supprimer", style=discord.ButtonStyle.danger, custom_id="supprimer")
     async def supprimer(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        if DISCORD_ALLOWED_USERS and interaction.user.id not in DISCORD_ALLOWED_USERS:
+            await interaction.response.send_message("⛔ Pas autorisé.", ephemeral=True)
+            return
         if self.decision_logger:
             self.decision_logger.log_decision(self.clip_num, "supprimer", interaction.user.name)
         self._supprimer()
-        await interaction.message.delete()
+        if interaction.message:
+            await interaction.message.delete()
         log.info(f"[Renderer] 🗑️ Clip #{self.clip_num} supprimé par {interaction.user.name}")
 
     def _deplacer(self, dossier: Path) -> Path | None:
@@ -138,7 +151,7 @@ class Renderer:
                 log.warning("[Renderer] ⚠️ Channel introuvable, vérifie DISCORD_CHANNEL_ID")
             self._ready.set()
 
-        asyncio.create_task(self._client.start(DISCORD_BOT_TOKEN))
+        asyncio.create_task(self._client.start(DISCORD_BOT_TOKEN or ""))
 
         try:
             await asyncio.wait_for(self._ready.wait(), timeout=15.0)
@@ -184,7 +197,7 @@ class Renderer:
             contenu += f"\n🔤 Mot répété : `{mot_rep}`"
 
         view = ClipView(
-            chemin_clip=chemin_hq,
+            chemin_clip=chemin_hq or "",
             clip_num=clip_num,
             decision_logger=self.decision_logger,
             mot_repetition=mot_rep,
@@ -197,6 +210,7 @@ class Renderer:
 
     async def _envoyer_avec_previews(self, contenu: str, previews: list, view: ClipView) -> None:
         fichiers = []
+        assert self._channel is not None, "_envoyer_avec_previews appelé sans channel"
         try:
             for p in [Path(p) for p in previews[:10]]:
                 if p.exists():
@@ -220,7 +234,8 @@ class Renderer:
                 pass
         finally:
             for f in fichiers:
-                f.fp.close() if hasattr(f, "fp") else None
+                if hasattr(f, "fp"):
+                    f.fp.close()
 
     async def stop(self) -> None:
         if self._client:

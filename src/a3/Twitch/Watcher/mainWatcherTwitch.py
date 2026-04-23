@@ -34,17 +34,20 @@ class Watcher:
         self.renderer = renderer
         self._ts_debut = time.time()
 
-        # 🟢 NOUVEAU: On laisse les classes utiliser nos excellents paramètres par défaut
+        # On laisse les classes utiliser nos excellents paramètres par défaut
+        if not CHANNEL_ID or not CLIENT_ID or not CLIENT_SECRET:
+            raise EnvironmentError("CHANNEL_ID, CLIENT_ID, CLIENT_SECRET doivent être définis")
+
         filtre_emote = FiltreEmoteDensity(
-            channel_id=CHANNEL_ID,
+            channel_id=CHANNEL_ID[0] if isinstance(CHANNEL_ID, list) else CHANNEL_ID,
             client_id=CLIENT_ID,
             client_secret=CLIENT_SECRET,
-            token=TOKEN,
+            token=TOKEN or "",
         )
         await filtre_emote.initialiser()
 
         filtre_clips = FiltreClipActivity(
-            channel_id=CHANNEL_ID,
+            channel_id=CHANNEL_ID[0] if isinstance(CHANNEL_ID, list) else CHANNEL_ID,
             client_id=CLIENT_ID,
             client_secret=CLIENT_SECRET,
         )
@@ -70,6 +73,7 @@ class Watcher:
         self._monitor_task = asyncio.create_task(self._surveiller_calibration())
 
     async def handle(self, message) -> None:
+        assert self.brain is not None, "handle() appelé avant start()"
         données = await self._collecter(message)
         await self.brain.analyze(données)
 
@@ -120,7 +124,7 @@ class Watcher:
 
                 if samples >= min_s:
                     self._calibres.add(nom)
-                    elapsed = int(time.time() - self._ts_debut)
+                    elapsed = int(time.time() - (self._ts_debut or time.time()))
                     log.info(f"[Watcher] ✅ {nom} calibré ({samples} samples | mean: {s['mean']:.2f} | std: {s['std']:.2f}) — {elapsed}s après démarrage")
                 else:
                     log.debug(f"[Watcher] 🔄 {nom} calibration {progress:.0f}% ({samples}/{min_s} samples)")
@@ -128,7 +132,7 @@ class Watcher:
             # Vérifier si tous calibrés
             if len(self._calibres) == len(self._filtres_adaptatifs):
                 self._tous_calibres = True
-                elapsed = int(time.time() - self._ts_debut)
+                elapsed = int(time.time() - (self._ts_debut or time.time()))
                 log.info("")
                 log.info(f"[Watcher] {'=' * 45}")
                 log.info(f"[Watcher] ✅ TOUS LES FILTRES CALIBRÉS — {elapsed}s après démarrage")

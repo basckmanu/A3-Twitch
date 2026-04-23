@@ -10,7 +10,7 @@ from pathlib import Path
 
 log = logging.getLogger("A3")
 
-DOSSIER_DECISIONS = Path("decisions")
+DOSSIER_DECISIONS = Path(__file__).resolve().parents[3] / "decisions"
 
 
 class DecisionLogger:
@@ -67,8 +67,9 @@ class DecisionLogger:
         log.info(f"[Decisions] ✅ Clip #{clip_num} — {decision} par {user} (score: {self._clips[clip_num]['score']:.2f})")
 
     def _sauvegarder(self) -> None:
+        temp = self._nom_fichier.with_suffix(".tmp")
         try:
-            with open(self._nom_fichier, "w", encoding="utf-8") as f:
+            with open(temp, "w", encoding="utf-8") as f:
                 json.dump(
                     {
                         "session": self._session_debut.isoformat(),
@@ -78,5 +79,8 @@ class DecisionLogger:
                     ensure_ascii=False,
                     indent=2,
                 )
+            temp.replace(self._nom_fichier)
         except Exception as e:
             log.error(f"[Decisions] ❌ Erreur sauvegarde : {e}")
+            if temp.exists():
+                temp.unlink(missing_ok=True)

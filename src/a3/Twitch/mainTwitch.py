@@ -15,6 +15,14 @@ from a3.Twitch.Watcher.mainWatcherTwitch import Watcher
 
 LOG_DIR = Path("logs")
 
+# ── Helpers ──────────────────────────────────────────────────────────
+
+
+def _creer_dossier(base: Path, nom: str) -> Path:
+    d = base / nom
+    d.mkdir(exist_ok=True)
+    return d
+
 # ------------------------------------------------------------------ #
 #  Setup logging                                                     #
 # ------------------------------------------------------------------ #
@@ -57,9 +65,9 @@ class TwitchBot(commands.Bot):
         self.log = logger
         self.capture = StreamCapture(channel=CHANNELS[0])
         self.watcher = Watcher()
-        self.decision_logger = DecisionLogger()  # 🟢 NOUVEAU
-        self.brain = Brain(logger=logger, decision_logger=self.decision_logger)  # 🟢 NOUVEAU
-        self.renderer = Renderer(decision_logger=self.decision_logger)  # 🟢 NOUVEAU
+        self.decision_logger = DecisionLogger()
+        self.brain = Brain(logger=logger, decision_logger=self.decision_logger)
+        self.renderer = Renderer(decision_logger=self.decision_logger)
 
     async def event_ready(self) -> None:
         channels_str = ", ".join(CHANNELS)

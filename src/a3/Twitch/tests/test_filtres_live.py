@@ -173,10 +173,10 @@ class BotTest(commands.Bot):
         }
 
         self.emote_density = FiltreEmoteDensity(
-            channel_id=CHANNEL_ID,
-            client_id=CLIENT_ID,
-            client_secret=CLIENT_SECRET,
-            token=TOKEN,
+            channel_id=CHANNEL_ID[0] if isinstance(CHANNEL_ID, list) else CHANNEL_ID,
+            client_id=CLIENT_ID or "",
+            client_secret=CLIENT_SECRET or "",
+            token=TOKEN or "",
             fenetre_welford=300,
             fenetre_fond=1200,
             z_score=3.0,

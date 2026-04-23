@@ -14,10 +14,12 @@ import aiohttp
 #  Config
 # ─────────────────────────────────────────
 
-INTERVALLE_POLL_SEC = 30  # Fréquence de vérification API
-FENETRE_CLIPS_SEC = 90  # Fenêtre de détection (clips dans les 90 dernières secondes)
-SEUIL_CLIPS = 1  # 📉 ABAISSÉ (était 3) : 1 clip natif suffit à déclencher
-COOLDOWN_SEC = 60  # Cooldown entre deux déclenchements
+INTERVALLE_POLL_SEC = 30
+FENETRE_CLIPS_SEC = 90
+SEUIL_CLIPS = 1
+COOLDOWN_SEC = 60
+MAX_RETRIES = 3
+RETRY_BACKOFF_SEC = 5.0
 
 
 class FiltreClipActivity:
@@ -89,13 +91,14 @@ class FiltreClipActivity:
             try:
                 await self._verifier_clips()
             except Exception as e:
-                print(f"[ClipActivity] ⚠️  Erreur poll: {e}")
+                print(f"[ClipActivity] ⚠️ Erreur poll: {e}")
             await asyncio.sleep(INTERVALLE_POLL_SEC)
 
     async def _verifier_clips(self) -> None:
         """Récupère les clips récents et met à jour le score."""
         from datetime import datetime, timezone
 
+        assert self._session is not None, "Session non initialisée"
         maintenant = time.time()
         started_at = datetime.fromtimestamp(maintenant - self.fenetre_sec, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -103,7 +106,7 @@ class FiltreClipActivity:
             "Authorization": f"Bearer {self._app_token}",
             "Client-Id": self.client_id,
         }
-        params = {
+        params: dict[str, str | int] = {
             "broadcaster_id": self.channel_id,
             "started_at": started_at,
             "first": 20,
@@ -156,14 +159,28 @@ class FiltreClipActivity:
     # ── Auth ───────────────────────────────
 
     async def _renouveler_token(self) -> None:
-        async with self._session.post(
-            "https://id.twitch.tv/oauth2/token",
-            params={
-                "client_id": self.client_id,
-                "client_secret": self.client_secret,
-                "grant_type": "client_credentials",
-            },
-        ) as resp:
-            data = await resp.json()
-            self._app_token = data["access_token"]
-            print("[ClipActivity] 🔑 Token renouvelé")
+        assert self._session is not None, "Session non initialisée"
+        for tentative in range(MAX_RETRIES):
+            try:
+                async with self._session.post(
+                    "https://id.twitch.tv/oauth2/token",
+                    params={
+                        "client_id": self.client_id,
+                        "client_secret": self.client_secret,
+                        "grant_type": "client_credentials",
+                    },
+                ) as resp:
+                    if resp.status != 200:
+                        texte = await resp.text()
+                        raise Exception(f"Token refresh échoué ({resp.status}): {texte[:100]}")
+                    data = await resp.json()
+                    self._app_token = data["access_token"]
+                    print("[ClipActivity] 🔑 Token renouvelé")
+                    return
+            except Exception as e:
+                if tentative < MAX_RETRIES - 1:
+                    print(f"[ClipActivity] ⚠️ Tentative {tentative + 1}/{MAX_RETRIES} échouée, retry dans {RETRY_BACKOFF_SEC}s: {e}")
+                    await asyncio.sleep(RETRY_BACKOFF_SEC * (tentative + 1))
+                else:
+                    print(f"[ClipActivity] ❌ Toutes les tentatives de renouvellement token épuisées: {e}")
+                    self._app_token = None

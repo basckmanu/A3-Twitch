@@ -17,7 +17,9 @@ def _charger_blacklist() -> set[str]:
     try:
         with open(FICHIER_BLACKLIST, encoding="utf-8") as f:
             return {m.lower() for m in json.load(f)}
-    except Exception:
+    except Exception as e:
+        import logging
+        logging.getLogger("A3").warning(f"[Repetition] ⚠️ Blacklist load failed: {e}")
         return set()
 
 
@@ -45,7 +47,7 @@ class FiltreRepetition(FiltreAdaptatif):
         )
         self.fenetre_courte = fenetre_courte
         self.longueur_min_mot = longueur_min_mot
-        self._blacklist: set[str] = _charger_blacklist()  # 🟢 chargée au démarrage
+        self._blacklist: set[str] = _charger_blacklist()
 
         self._fenetre_deque: deque[tuple[float, set[str]]] = deque()
         self._dernier_mot_dominant: str = ""
@@ -94,7 +96,7 @@ class FiltreRepetition(FiltreAdaptatif):
     def _extraire_mots(self, contenu: str) -> set[str]:
         texte_propre = re.sub(r"[^\w\s]", "", contenu.lower())
         mots = texte_propre.split()
-        # 🟢 exclut les mots vides ET la blacklist
+        # exclut les mots vides ET la blacklist
         return {m for m in mots if len(m) >= self.longueur_min_mot and m not in self.MOTS_VIDES and m not in self._blacklist}
 
     def _calculer_signal(self, message) -> float:
