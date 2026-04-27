@@ -1,4 +1,7 @@
 # src/a3/Twitch/Brain/mainBrainTwitch.py
+#
+# Cerveau du système : agrège les scores des filtres et prend les décisions de clip.
+# Gère le déclenchement de l'enregistrement, le découpage et l'envoi au Discord.
 
 import asyncio
 import hashlib

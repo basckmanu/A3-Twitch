@@ -1,12 +1,17 @@
 # src/a3/Twitch/Watcher/filtres/watcherFiltreRepetition.py
+#
+# Filtre qui détecte la répétition de mots (spam de un mot).
 
 import json
+import logging
 import re
 import time
 from collections import Counter, deque
 from pathlib import Path
 
 from a3.Twitch.Watcher.filtres.watcherFiltreBase import FiltreAdaptatif
+
+logger = logging.getLogger("A3")
 
 FICHIER_BLACKLIST = Path("blacklist_mots.json")
 
@@ -131,5 +136,5 @@ class FiltreRepetition(FiltreAdaptatif):
         score = self._evaluer_signal(signal, maintenant)
         if score > 0.0:
             s = self.stats()
-            print(f"[Repetition] 🔥 RÉPÉTITION — mot: '{self._dernier_mot_dominant}' / signal: {signal:.2f} / seuil: {s['seuil']:.2f} / score: {score:.3f}")
+            logger.warning(f"[Repetition] 🔥 RÉPÉTITION — mot: '{self._dernier_mot_dominant}' / signal: {signal:.2f} / seuil: {s['seuil']:.2f} / score: {score:.3f}")
         return score

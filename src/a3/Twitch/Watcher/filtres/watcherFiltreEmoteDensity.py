@@ -1,4 +1,7 @@
 # src/a3/Twitch/Watcher/filtres/watcherFiltreEmoteDensity.py
+#
+# Filtre qui mesure la densité d'emotes (BTTV / FFZ / 7TV) dans les messages.
+# Détecte les pics d'emotes quand le ratio emotes/caractères dépasse la baseline.
 
 import asyncio
 import hashlib

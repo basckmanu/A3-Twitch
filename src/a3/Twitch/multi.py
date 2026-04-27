@@ -11,10 +11,12 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+logger = logging.getLogger("A3")
+
 # Ajoute src au path pour les imports
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from a3.config import CHANNELS
+from a3.config import CHANNELS  # noqa: E402
 
 
 def _run_channel(channel: str, log_dir: Path) -> None:
@@ -58,7 +60,7 @@ def launch_multi(channels: list[str] | None = None) -> None:
         channels = CHANNELS
 
     if not channels:
-        print("[Multi] ⚠️  Aucun channel défini dans CHANNELS")
+        logger.warning("[Multi] ⚠️  Aucun channel défini dans CHANNELS")
         return
 
     base = Path(__file__).resolve().parents[2]
@@ -70,10 +72,10 @@ def launch_multi(channels: list[str] | None = None) -> None:
         p = mp.Process(target=_run_channel, args=(channel, log_dir), name=f"a3-{channel}", daemon=False)
         p.start()
         processes.append(p)
-        print(f"[Multi] ✅ Process #{p.name} (pid={p.pid}) démarré")
+        logger.info(f"[Multi] ✅ Process #{p.name} (pid={p.pid}) démarré")
 
     def shutdown_all(signum, frame):
-        print("\n[Multi] ⛔ Arrêt global demandé...")
+        logger.info("\n[Multi] ⛔ Arrêt global demandé...")
         for p in processes:
             p.terminate()
         for p in processes:

@@ -1,9 +1,14 @@
 # src/a3/Twitch/Watcher/filtres/watcherFiltreEmotions.py
+#
+# Filtre qui détecte les pics d'émotions (rire, rage, hype, etc.) via regex.
 
+import logging
 import re
 import time
 
 from a3.Twitch.Watcher.filtres.watcherFiltreBase import FiltreAdaptatif
+
+logger = logging.getLogger("A3")
 
 PATTERNS_EMOTIONS: dict[str, list[re.Pattern]] = {
     "drole": [
@@ -120,5 +125,5 @@ class FiltreEmotions(FiltreAdaptatif):
         if score > 0.0:
             s = self.stats()
             classe = self._classe_dominante(self._dernier_message or "")
-            print(f"[Emotions] 🔥 PIC — classe: {classe} / signal: {signal:.2f} / seuil: {s['seuil']:.2f} / score: {score:.3f}")
+            logger.warning(f"[Emotions] 🔥 PIC — classe: {classe} / signal: {signal:.2f} / seuil: {s['seuil']:.2f} / score: {score:.3f}")
         return score

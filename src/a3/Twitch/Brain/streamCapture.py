@@ -1,5 +1,7 @@
 # src/a3/Twitch/Brain/streamCapture.py
-
+#
+# Capture le flux vidéo du stream via streamlink et découpe des clips avec ffmpeg.
+# Utilise un buffer circulaire de segments pour permettre le clip rétroactif.
 import asyncio
 import logging
 import subprocess
@@ -53,7 +55,7 @@ class StreamCapture:
         self._thread = threading.Thread(target=self._boucle_capture_thread, daemon=True)
         self._thread.start()
         self._surveillance_task = asyncio.create_task(self._surveiller_nouveaux_segments())
-        print(f"[StreamCapture] 🎥 Capture démarrée pour {self.channel}")
+        logger.info(f"[StreamCapture] 🎥 Capture démarrée pour {self.channel}")
 
     async def arreter(self):
         self._actif = False
@@ -64,7 +66,7 @@ class StreamCapture:
             except asyncio.CancelledError:
                 pass
         self._nettoyer_buffer_complet()
-        print("[StreamCapture] 🛑 Capture arrêtée")
+        logger.info("[StreamCapture] 🛑 Capture arrêtée")
 
     def _boucle_capture_thread(self):
         while self._actif:
@@ -79,16 +81,25 @@ class StreamCapture:
         cmd_streamlink = ["streamlink", "--stdout", "--twitch-disable-ads", self.url_stream, QUALITE_STREAM]
         cmd_ffmpeg = ["ffmpeg", "-i", "pipe:0", "-c", "copy", "-f", "segment", "-segment_time", str(DUREE_SEGMENT_SEC), "-strftime", "1", "-reset_timestamps", "1", pattern_sortie, "-y", "-loglevel", "error"]
 
-        print("[StreamCapture] 🔴 Connexion au stream...")
+        logger.info("[StreamCapture] 🔴 Connexion au stream...")
         proc_sl = subprocess.Popen(cmd_streamlink, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
         proc_ff = subprocess.Popen(cmd_ffmpeg, stdin=proc_sl.stdout, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         proc_sl.stdout.close()
 
         while self._actif and proc_ff.poll() is None:
             time.sleep(1)
+
+        if proc_sl.poll() is not None and proc_sl.returncode != 0:
+            logger.warning("[StreamCapture] ⚠️ streamlink a échoué (code=%d), reconnexion dans 20s...", proc_sl.returncode)
+            time.sleep(20)
+        else:
+            # Petit délai avant reconnection pour éviter la boucle serrée
+            time.sleep(5)
         try:
-            proc_sl.kill()
-            proc_ff.kill()
+            if proc_sl.poll() is None:
+                proc_sl.kill()
+            if proc_ff.poll() is None:
+                proc_ff.kill()
         except Exception as e:
             logger.debug(f"[StreamCapture] Processus déjà arrêtés: {e}")
 
@@ -221,14 +232,8 @@ class StreamCapture:
                 logger.error(f"[StreamCapture] ⏱️ timeout ffmpeg {label} ({timeout_s}s)")
                 return False
 
-        # Les deux ffmpeg en parallèle (chacun écrit dans DOSSIER_CLIPS)
-        results = await asyncio.gather(
-            _run_ffmpeg(cmd_main, 300, "clip principal"),
-            _run_ffmpeg(cmd_preview, 300, "previews"),
-        )
-
-        ok_main = results[0]
-
+        # D'abord le clip principal, puis les previews (qui dépendent du fichier généré)
+        ok_main = await _run_ffmpeg(cmd_main, 300, "clip principal")
         if not ok_main:
             logger.error("[StreamCapture] ❌ Échec génération clip principal")
             try:
@@ -237,12 +242,17 @@ class StreamCapture:
                 pass
             return None
 
+        ok_preview = await _run_ffmpeg(cmd_preview, 300, "previews")
+
+        if not ok_preview:
+            logger.warning("[StreamCapture] ⚠️ Échec génération previews — clip quand même créé")
+
         taille_mb = chemin_sortie.stat().st_size / 1024 / 1024
-        print(f"[StreamCapture] ✅ Clip HQ généré: {chemin_sortie} ({taille_mb:.1f} MB)")
+        logger.info(f"[StreamCapture] ✅ Clip HQ généré: {chemin_sortie} ({taille_mb:.1f} MB)")
 
         previews = [p for p in DOSSIER_CLIPS.iterdir() if p.name.startswith(f"preview_{nom_stem}_") and p.suffix == ".mp4"]
         previews.sort()
-        print(f"[StreamCapture] 🔍 {len(previews)} morceau(x) de preview trouvé(s)")
+        logger.info(f"[StreamCapture] 🔍 {len(previews)} morceau(x) de preview trouvé(s)")
 
         try:
             chemin_liste.unlink()

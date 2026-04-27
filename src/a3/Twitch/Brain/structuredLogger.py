@@ -131,7 +131,7 @@ class StructuredLogger:
             base = Path(__file__).resolve().parents[3]
             output_dir = base / "logs" / "structured"
         self._output_dir = output_dir
-        self._output_dir.mkdir(exist_ok=True)
+        self._output_dir.mkdir(parents=True, exist_ok=True)
 
         # Fichier JSON par session
         ts = datetime.now(timezone.utc).strftime("%Y-%m-%d_%H-%M-%S")

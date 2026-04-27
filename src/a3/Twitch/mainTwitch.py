@@ -69,7 +69,6 @@ class TwitchBot(commands.Bot):
         self.capture = StreamCapture(channel=channel)
         self.watcher = Watcher()
         self.decision_logger = DecisionLogger()
-        self.decision_logger._start_cleanup()
         self.brain = Brain(logger=logger, decision_logger=self.decision_logger, channel=channel)
         self.renderer = Renderer(decision_logger=self.decision_logger, struct_log=self.brain._struct_log)
 
@@ -78,6 +77,7 @@ class TwitchBot(commands.Bot):
         self.log.info(f"👀 BOT ACTIVÉ : Connecté au chat de {channels_str}")
         self.log.info("-" * 50)
 
+        self.decision_logger._start_cleanup()
         await self.capture.demarrer()
         await self.watcher.start(self.brain, self.renderer)
         await self.brain.start(self.capture, self.renderer)
@@ -106,4 +106,4 @@ if __name__ == "__main__":
     try:
         bot.run()
     except KeyboardInterrupt:
-        print("\nArrêt manuel demandé (Ctrl+C). Fermeture en cours...")
+        logger.info("\nArrêt manuel demandé (Ctrl+C). Fermeture en cours...")

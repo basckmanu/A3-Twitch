@@ -1,9 +1,15 @@
 # src/a3/Twitch/Watcher/filtres/watcherFiltreMessageRate.py
+#
+# Filtre qui mesure la vélocité des messages (nb de msgs par fenêtre de temps).
+# Détecte les pics quand le nombre de messages dépasse la baseline adaptative.
 
+import logging
 import time
 from collections import deque
 
 from a3.Twitch.Watcher.filtres.watcherFiltreBase import FiltreAdaptatif
+
+logger = logging.getLogger("A3")
 
 
 class FiltreMessageRate(FiltreAdaptatif):
@@ -45,5 +51,5 @@ class FiltreMessageRate(FiltreAdaptatif):
         score = self._evaluer_signal(signal, maintenant)
         if score > 0.0:
             s = self.stats()
-            print(f"[MessageRate] 🔥 PIC — vélocité: {signal:.0f} msgs/{self.fenetre_courte}s / mean: {s['mean']:.1f} / seuil: {s['seuil']:.1f} / score: {score:.3f}")
+            logger.warning(f"[MessageRate] 🔥 PIC — vélocité: {signal:.0f} msgs/{self.fenetre_courte}s / mean: {s['mean']:.1f} / seuil: {s['seuil']:.1f} / score: {score:.3f}")
         return score

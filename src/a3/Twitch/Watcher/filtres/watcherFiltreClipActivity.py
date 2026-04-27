@@ -5,10 +5,13 @@
 # Si >= SEUIL_CLIPS clips ont été créés dans la dernière minute → score = 1.0
 
 import asyncio
+import logging
 import time
 from collections import deque
 
 import aiohttp
+
+logger = logging.getLogger("A3")
 
 # ─────────────────────────────────────────
 #  Config
@@ -65,7 +68,7 @@ class FiltreClipActivity:
         # Pre-seeding : peupler _clips_vus avec les clips déjà existants
         await self._preSeeder_clips()
         self._poll_task = asyncio.create_task(self._boucle_poll())
-        print(f"[ClipActivity] ✅ Polling démarré — seuil: {self.seuil_clips} clips / {self.fenetre_sec}s")
+        logger.info(f"[ClipActivity] ✅ Polling démarré — seuil: {self.seuil_clips} clips / {self.fenetre_sec}s")
 
     async def _preSeeder_clips(self) -> None:
         """Au premier démarrage, récupère les clips existants dans la fenêtre
@@ -104,9 +107,9 @@ class FiltreClipActivity:
                 self._clips_vus.add(clip["id"])
 
             if clips:
-                print(f"[ClipActivity] 📎 Pre-seeding: {len(clips)} clips existants déjà enregistrés")
+                logger.info(f"[ClipActivity] 📎 Pre-seeding: {len(clips)} clips existants déjà enregistrés")
         except Exception as e:
-            print(f"[ClipActivity] ⚠️ Pre-seeding échoué: {e}")
+            logger.warning(f"[ClipActivity] ⚠️ Pre-seeding échoué: {e}")
 
     async def arreter(self) -> None:
         if self._poll_task:
@@ -134,7 +137,7 @@ class FiltreClipActivity:
             try:
                 await self._verifier_clips()
             except Exception as e:
-                print(f"[ClipActivity] ⚠️ Erreur poll: {e}")
+                logger.warning(f"[ClipActivity] ⚠️ Erreur poll: {e}")
             await asyncio.sleep(INTERVALLE_POLL_SEC)
 
     async def _verifier_clips(self) -> None:
@@ -185,7 +188,7 @@ class FiltreClipActivity:
         nb_clips = len(self._clips_recents)
 
         if nouveaux > 0:
-            print(f"[ClipActivity] 📎 {nouveaux} nouveau(x) clip(s) — total fenêtre: {nb_clips}/{self.seuil_clips}")
+            logger.info(f"[ClipActivity] 📎 {nouveaux} nouveau(x) clip(s) — total fenêtre: {nb_clips}/{self.seuil_clips}")
 
         # Mise à jour du score
         if nb_clips >= self.seuil_clips:
@@ -193,7 +196,7 @@ class FiltreClipActivity:
             if temps_depuis >= self.cooldown:
                 self._score_actuel = 1.0
                 self._ts_dernier_trigger = maintenant
-                print(f"[ClipActivity] 🔥 SEUIL ATTEINT — {nb_clips} clips en {self.fenetre_sec}s")
+                logger.warning(f"[ClipActivity] 🔥 SEUIL ATTEINT — {nb_clips} clips en {self.fenetre_sec}s")
             else:
                 self._score_actuel = 0.0  # cooldown actif
         else:
@@ -218,12 +221,12 @@ class FiltreClipActivity:
                         raise Exception(f"Token refresh échoué ({resp.status}): {texte[:100]}")
                     data = await resp.json()
                     self._app_token = data["access_token"]
-                    print("[ClipActivity] 🔑 Token renouvelé")
+                    logger.info("[ClipActivity] 🔑 Token renouvelé")
                     return
             except Exception as e:
                 if tentative < MAX_RETRIES - 1:
-                    print(f"[ClipActivity] ⚠️ Tentative {tentative + 1}/{MAX_RETRIES} échouée, retry dans {RETRY_BACKOFF_SEC}s: {e}")
+                    logger.warning(f"[ClipActivity] ⚠️ Tentative {tentative + 1}/{MAX_RETRIES} échouée, retry dans {RETRY_BACKOFF_SEC}s: {e}")
                     await asyncio.sleep(RETRY_BACKOFF_SEC * (tentative + 1))
                 else:
-                    print(f"[ClipActivity] ❌ Toutes les tentatives de renouvellement token épuisées: {e}")
+                    logger.error(f"[ClipActivity] ❌ Toutes les tentatives de renouvellement token épuisées: {e}")
                     self._app_token = None

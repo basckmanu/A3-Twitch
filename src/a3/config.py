@@ -1,3 +1,8 @@
+# src/a3/config.py
+#
+# Charge les variables d'environnement depuis .env et exporte la config globale.
+# Utilisé par tous les modules du projet.
+
 import os
 
 from dotenv import load_dotenv

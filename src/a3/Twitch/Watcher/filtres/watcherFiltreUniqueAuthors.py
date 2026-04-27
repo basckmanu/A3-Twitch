@@ -1,9 +1,14 @@
 # src/a3/Twitch/Watcher/filtres/watcherFiltreUniqueAuthors.py
+#
+# Filtre qui détecte les bursts d'auteurs uniques (nouveaux viewers actifs).
 
+import logging
 import time
 from collections import deque
 
 from a3.Twitch.Watcher.filtres.watcherFiltreBase import FiltreAdaptatif
+
+logger = logging.getLogger("A3")
 
 
 class FiltreUniqueAuthors(FiltreAdaptatif):
@@ -85,5 +90,5 @@ class FiltreUniqueAuthors(FiltreAdaptatif):
         score = self._evaluer_signal(signal, maintenant)
         if score > 0.0:
             s = self.stats()
-            print(f"[UniqueAuthors] 🔥 BURST — signal: {signal:.0f} (auteurs: {len(self._freq_courte)} / lurkers: {self._lurkers_count}) / seuil: {s['seuil']:.1f} / score: {score:.3f}")
+            logger.warning(f"[UniqueAuthors] 🔥 BURST — signal: {signal:.0f} (auteurs: {len(self._freq_courte)} / lurkers: {self._lurkers_count}) / seuil: {s['seuil']:.1f} / score: {score:.3f}")
         return score
