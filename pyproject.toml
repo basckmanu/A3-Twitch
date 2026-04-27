@@ -5,6 +5,7 @@ description = ""
 requires-python = ">=3.12"
 dependencies = [
     "aiohttp>=3.13.3",
+    "discord.py>=2.4.0",
     "python-dotenv>=1.2.1",
     "twitchio==2.10.0",
 ]
