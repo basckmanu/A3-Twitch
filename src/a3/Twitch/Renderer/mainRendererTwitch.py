@@ -12,6 +12,11 @@ import discord
 
 log = logging.getLogger("A3")
 
+_BASE = Path(__file__).resolve().parents[3]
+
+def _CHANNEL(channel: str, sub: str) -> Path:
+    return _BASE / "clips" / channel / sub
+
 # ------------------------------------------------------------------ #
 #  Configuration                                                     #
 # ------------------------------------------------------------------ #
@@ -20,10 +25,7 @@ DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 DISCORD_CHANNEL_ID = int(os.getenv("DISCORD_CHANNEL_ID", "0"))
 DISCORD_ALLOWED_USERS = {uid.strip() for uid in os.getenv("DISCORD_ALLOWED_USERS", "").split(",") if uid.strip()}
 
-DOSSIER_VALIDATED = Path("clips_validated")
-DOSSIER_HIGHLIGHTS = Path("clips_highlights")
-DOSSIER_REJECTED = Path("clips_rejected")
-FICHIER_BLACKLIST = Path("blacklist_mots.json")
+FICHIER_BLACKLIST = _BASE / "blacklist_mots.json"
 
 TAILLE_MAX_MB = 24.0
 
@@ -53,6 +55,7 @@ def charger_blacklist() -> set[str]:
 class ClipView(discord.ui.View):
     def __init__(
         self,
+        channel: str,
         chemin_clip: str,
         clip_num: int,
         decision_logger=None,
@@ -60,18 +63,24 @@ class ClipView(discord.ui.View):
         structured_logger=None,
     ) -> None:
         super().__init__(timeout=None)
+        self.channel = channel
         self.chemin_clip = Path(chemin_clip) if chemin_clip else None
         self.clip_num = clip_num
         self.decision_logger = decision_logger
         self.mot_repetition = mot_repetition
         self._struct_log = structured_logger
 
+    def _dest_dir(self, sub: str) -> Path:
+        d = _CHANNEL(self.channel, sub)
+        d.mkdir(exist_ok=True)
+        return d
+
     @discord.ui.button(label="✅ Garder", style=discord.ButtonStyle.success, custom_id="garder")
     async def garder(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         if DISCORD_ALLOWED_USERS and interaction.user.id not in DISCORD_ALLOWED_USERS:
             await interaction.response.send_message("⛔ Pas autorisé.", ephemeral=True)
             return
-        chemin_dest = self._deplacer(DOSSIER_VALIDATED)
+        chemin_dest = self._deplacer("validated")
         if chemin_dest:
             if self.decision_logger:
                 self.decision_logger.log_decision(self.clip_num, "garder", interaction.user.name)
@@ -90,7 +99,7 @@ class ClipView(discord.ui.View):
         if DISCORD_ALLOWED_USERS and interaction.user.id not in DISCORD_ALLOWED_USERS:
             await interaction.response.send_message("⛔ Pas autorisé.", ephemeral=True)
             return
-        chemin_dest = self._deplacer(DOSSIER_HIGHLIGHTS)
+        chemin_dest = self._deplacer("highlights")
         if chemin_dest:
             if self.decision_logger:
                 self.decision_logger.log_decision(self.clip_num, "highlight", interaction.user.name)
@@ -118,18 +127,18 @@ class ClipView(discord.ui.View):
             await interaction.message.delete()
         log.info(f"[Renderer] 🗑️ Clip #{self.clip_num} supprimé par {interaction.user.name}")
 
-    def _deplacer(self, dossier: Path) -> Path | None:
+    def _deplacer(self, sub: str) -> Path | None:
         if not self.chemin_clip or not self.chemin_clip.exists():
             return None
-        dossier.mkdir(exist_ok=True)
+        dossier = self._dest_dir(sub)
         dest = dossier / self.chemin_clip.name
         shutil.move(str(self.chemin_clip), dest)
         return dest
 
     def _supprimer(self) -> None:
         if self.chemin_clip and self.chemin_clip.exists():
-            DOSSIER_REJECTED.mkdir(exist_ok=True)
-            dest = DOSSIER_REJECTED / self.chemin_clip.name
+            dossier = self._dest_dir("rejected")
+            dest = dossier / self.chemin_clip.name
             shutil.move(str(self.chemin_clip), dest)
 
 
@@ -139,13 +148,29 @@ class ClipView(discord.ui.View):
 
 
 class Renderer:
-    def __init__(self, decision_logger=None, struct_log=None) -> None:
+    def __init__(self, channel: str, decision_logger=None, struct_log=None) -> None:
         self._client: discord.Client | None = None
         self._channel: discord.TextChannel | None = None
         self._ready = asyncio.Event()
         self._clip_counter: int = 0
         self.decision_logger = decision_logger
         self._struct_log = struct_log
+        self.channel = channel
+
+    def _clip_dir(self, sub: str) -> Path:
+        return _CHANNEL(sub)
+
+    def _resolved_clip_path(self, chemin_clip: str) -> Path | None:
+        if not chemin_clip:
+            return None
+        p = Path(chemin_clip)
+        if p.exists():
+            return p
+        # Try current directory relative path
+        resolved = self._clip_dir("output") / Path(chemin_clip).name
+        if resolved.exists():
+            return resolved
+        return None
 
     async def start(self) -> None:
         intents = discord.Intents.default()
@@ -210,7 +235,8 @@ class Renderer:
             clip_num=clip_num,
             decision_logger=self.decision_logger,
             mot_repetition=mot_rep,
-            structured_logger=self._struct_log if hasattr(self, "_struct_log") else None,
+            structured_logger=self._struct_log,
+            channel=self.channel,
         )
 
         if previews:

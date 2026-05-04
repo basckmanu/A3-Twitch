@@ -68,9 +68,9 @@ class TwitchBot(commands.Bot):
         channel = channels[0]
         self.capture = StreamCapture(channel=channel)
         self.watcher = Watcher()
-        self.decision_logger = DecisionLogger()
+        self.decision_logger = DecisionLogger(channel=channel)
         self.brain = Brain(logger=logger, decision_logger=self.decision_logger, channel=channel)
-        self.renderer = Renderer(decision_logger=self.decision_logger, struct_log=self.brain._struct_log)
+        self.renderer = Renderer(channel=channel, decision_logger=self.decision_logger, struct_log=self.brain._struct_log)
 
     async def event_ready(self) -> None:
         channels_str = ", ".join(self._target_channel or CHANNELS)

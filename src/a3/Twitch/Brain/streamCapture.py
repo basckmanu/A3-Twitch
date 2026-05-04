@@ -19,8 +19,15 @@ BUFFER_DUREE_MAX_SEC = 360
 DUREE_SEGMENT_SEC = 30
 DELAI_CHAT_VIDEO_SEC = 8
 QUALITE_STREAM = "best"
-DOSSIER_SEGMENTS = _BASE / "buffer_segments"
-DOSSIER_CLIPS = _BASE / "clips_output"
+
+def _channel_dir(channel: str, sub: str) -> Path:
+    return _BASE / sub / channel
+
+def _segments_dir(channel: str) -> Path:
+    return _channel_dir(channel, "buffer_segments")
+
+def _clips_dir(channel: str) -> Path:
+    return _channel_dir(channel, "clips_output")
 
 
 @dataclass
@@ -45,8 +52,10 @@ class StreamCapture:
         self._thread: threading.Thread | None = None
         self._surveillance_task: asyncio.Task | None = None
 
-        DOSSIER_SEGMENTS.mkdir(exist_ok=True)
-        DOSSIER_CLIPS.mkdir(exist_ok=True)
+        self._segments_dir = _segments_dir(channel)
+        self._clips_dir = _clips_dir(channel)
+        self._segments_dir.mkdir(exist_ok=True)
+        self._clips_dir.mkdir(exist_ok=True)
 
     async def demarrer(self):
         if self._actif:
@@ -77,7 +86,7 @@ class StreamCapture:
                 time.sleep(15)
 
     def _capturer_segments(self):
-        pattern_sortie = str(DOSSIER_SEGMENTS / "seg_%Y%m%d_%H%M%S.ts")
+        pattern_sortie = str(self._segments_dir / "seg_%Y%m%d_%H%M%S.ts")
         cmd_streamlink = ["streamlink", "--stdout", "--twitch-disable-ads", self.url_stream, QUALITE_STREAM]
         cmd_ffmpeg = ["ffmpeg", "-i", "pipe:0", "-c", "copy", "-f", "segment", "-segment_time", str(DUREE_SEGMENT_SEC), "-strftime", "1", "-reset_timestamps", "1", pattern_sortie, "-y", "-loglevel", "error"]
 
@@ -107,7 +116,7 @@ class StreamCapture:
         vus = set()
         while self._actif:
             try:
-                for fichier in sorted(DOSSIER_SEGMENTS.glob("seg_*.ts")):
+                for fichier in sorted(self._segments_dir.glob("seg_*.ts")):
                     if fichier not in vus:
                         await asyncio.sleep(2)
                         if not fichier.exists():
@@ -152,7 +161,7 @@ class StreamCapture:
                 except Exception as e:
                     logger.debug(f"[StreamCapture] Segment cleanup error: {e}")
             self.buffer.clear()
-        for f in DOSSIER_SEGMENTS.glob("seg_*.ts"):
+        for f in self._segments_dir.glob("seg_*.ts"):
             try:
                 f.unlink()
             except Exception:
@@ -175,8 +184,8 @@ class StreamCapture:
         if not segments_necessaires:
             return None
 
-        chemin_sortie = DOSSIER_CLIPS / nom
-        chemin_liste = DOSSIER_SEGMENTS / f"_concat_{nom}.txt"
+        chemin_sortie = self._clips_dir / nom
+        chemin_liste = self._segments_dir / f"_concat_{nom}.txt"
 
         with open(chemin_liste, "w", encoding="utf-8") as f:
             for seg in segments_necessaires:
@@ -250,7 +259,7 @@ class StreamCapture:
         taille_mb = chemin_sortie.stat().st_size / 1024 / 1024
         logger.info(f"[StreamCapture] ✅ Clip HQ généré: {chemin_sortie} ({taille_mb:.1f} MB)")
 
-        previews = [p for p in DOSSIER_CLIPS.iterdir() if p.name.startswith(f"preview_{nom_stem}_") and p.suffix == ".mp4"]
+        previews = [p for p in self._clips_dir.iterdir() if p.name.startswith(f"preview_{nom_stem}_") and p.suffix == ".mp4"]
         previews.sort()
         logger.info(f"[StreamCapture] 🔍 {len(previews)} morceau(x) de preview trouvé(s)")
 

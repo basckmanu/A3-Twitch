@@ -123,7 +123,7 @@ class StructuredLogger:
     ) -> None:
         self.channel = channel
         self.session_id = session_id or str(uuid.uuid4())[:8]
-        self._db = db_handler or DummyDBHandler()
+        self._db = db_handler or self._auto_db_handler()
         self._buffer: list[dict] = []
 
         # Output directory (défaut : logs/structured/)
@@ -133,7 +133,7 @@ class StructuredLogger:
         self._output_dir = output_dir
         self._output_dir.mkdir(parents=True, exist_ok=True)
 
-        # Fichier JSON par session
+        # Fichier JSONL par session
         ts = datetime.now(timezone.utc).strftime("%Y-%m-%d_%H-%M-%S")
         self._file_path = self._output_dir / f"a3_{channel}_{ts}_{self.session_id}.jsonl"
         self._file = open(self._file_path, "a", encoding="utf-8")
@@ -141,6 +141,39 @@ class StructuredLogger:
         # Logging standard pour la console (humain lisible)
         self._console = logging.getLogger(f"A3.{channel}.structured")
         self._console.setLevel(logging.INFO)
+
+    def _auto_db_handler(self) -> DatabaseHandler:
+        """Auto-detects DB: PostgreSQL (DB_TYPE=postgres) > MySQL > Dummy."""
+        import os
+        from dotenv import load_dotenv
+        load_dotenv()
+
+        db_type = os.getenv("DB_TYPE", "").lower()
+        db_password = os.getenv("DB_PASSWORD", "")
+
+        # PostgreSQL
+        if db_type == "postgres" or (not db_type and db_password):
+            try:
+                from a3.Twitch.Brain.postgresHandler import PostgresHandler
+                handler = PostgresHandler()
+                if handler._db is not None:
+                    self._console.info("[StructuredLogger] 📦 PostgreSQL handler activé")
+                    return handler
+            except Exception as e:
+                self._console.warning(f"[StructuredLogger] ⚠️ PostgreSQL non disponible : {e}")
+
+        # MySQL
+        if db_password:
+            try:
+                from a3.Twitch.Brain.databaseHandler import MySQLHandler
+                handler = MySQLHandler()
+                if handler._db is not None:
+                    self._console.info("[StructuredLogger] 📦 MySQL handler activé")
+                    return handler
+            except Exception as e:
+                self._console.warning(f"[StructuredLogger] ⚠️ MySQL non disponible : {e}")
+
+        return DummyDBHandler()
 
     # ── Public API ──────────────────────────────────────────────────
 

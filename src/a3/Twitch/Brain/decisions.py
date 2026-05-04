@@ -12,13 +12,16 @@ from pathlib import Path
 
 log = logging.getLogger("A3")
 
-DOSSIER_DECISIONS = Path(__file__).resolve().parents[3] / "decisions"
-CLIP_DIRS = [
-    Path(__file__).resolve().parents[3] / "clips_validated",
-    Path(__file__).resolve().parents[3] / "clips_highlights",
-    Path(__file__).resolve().parents[3] / "clips_rejected",
-    Path(__file__).resolve().parents[3] / "clips_output",
-]
+_BASE = Path(__file__).resolve().parents[3]
+
+# Dossiers par channel : clips/{channel}/{sub}
+def _channel_clips(channel: str, sub: str) -> Path:
+    return _BASE / "clips" / channel / sub
+
+def _dossier_decisions(channel: str) -> Path:
+    return _BASE / "decisions" / channel
+
+CLIP_SUBDIRS = ["output", "validated", "highlights", "rejected"]
 RETENTION_DAYS = 14
 CLEANUP_INTERVAL_SEC = 3600
 
@@ -26,18 +29,23 @@ CLEANUP_INTERVAL_SEC = 3600
 class DecisionLogger:
     """
     Enregistre chaque clip généré et chaque décision de review.
-    Un fichier JSON par session : decisions/session_YYYY-MM-DD_HH-MM-SS.json
+    Un fichier JSON par session par channel : decisions/{channel}/session_YYYY-MM-DD_HH-MM-SS.json
     Cleanup policy : supprime automatiquement les clips > 14 jours.
     """
 
-    def __init__(self, retention_days: int = RETENTION_DAYS) -> None:
-        DOSSIER_DECISIONS.mkdir(exist_ok=True)
+    def __init__(self, channel: str = "unknown", retention_days: int = RETENTION_DAYS) -> None:
+        self.channel = channel
+        self._dossier = _dossier_decisions(channel)
+        self._dossier.mkdir(parents=True, exist_ok=True)
         self._session_debut = datetime.now()
-        self._nom_fichier = DOSSIER_DECISIONS / f"session_{self._session_debut.strftime('%Y-%m-%d_%H-%M-%S')}.json"
+        self._nom_fichier = self._dossier / f"session_{self._session_debut.strftime('%Y-%m-%d_%H-%M-%S')}.json"
         self._clips: dict[int, dict] = {}
         self._retention_days = retention_days
         self._cleanup_task: asyncio.Task | None = None
         log.info(f"[Decisions] 📋 Session démarrée → {self._nom_fichier}")
+
+    def _clip_dir(self, sub: str) -> Path:
+        return _channel_clips(self.channel, sub)
 
     def _start_cleanup(self) -> None:
         """Lance le cleanup en arrière-plan (une seule fois, après démarrage event loop)."""
@@ -56,7 +64,8 @@ class DecisionLogger:
         limite = time.time() - (self._retention_days * 86400)
         total_supprimes = 0
 
-        for dossier in CLIP_DIRS:
+        for sub in CLIP_SUBDIRS:
+            dossier = self._clip_dir(sub)
             if not dossier.exists():
                 continue
             for f in dossier.iterdir():
@@ -91,6 +100,7 @@ class DecisionLogger:
             "decision": None,
             "decision_user": None,
             "decision_timestamp": None,
+            "channel": self.channel,
         }
         self._sauvegarder()
         log.info(f"[Decisions] 📝 Clip #{clip_num} enregistré (score: {score:.2f})")
@@ -119,6 +129,7 @@ class DecisionLogger:
                 json.dump(
                     {
                         "session": self._session_debut.isoformat(),
+                        "channel": self.channel,
                         "clips": list(self._clips.values()),
                     },
                     f,
