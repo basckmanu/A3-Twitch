@@ -55,6 +55,7 @@ class TwitchBot(commands.Bot):
         self._brains: dict[str, Brain] = {ch: Brain(logger=logger, decision_logger=self.decision_logger, channel=ch) for ch in channels}
 
         self.renderer = Renderer(
+            channel=channels[0] if channels else "unknown",
             decision_logger=self.decision_logger,
             struct_log=next(iter(self._brains.values()))._struct_log,
         )

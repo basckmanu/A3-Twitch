@@ -87,7 +87,7 @@ class ClipView(discord.ui.View):
             if self.decision_logger:
                 self.decision_logger.log_decision(self.clip_num, "garder", interaction.user.name)
             if self._struct_log:
-                self._struct_log.log_review(self.clip_num, "garder", interaction.user.name)
+                self._struct_log.log_review(self.clip_num, "garder", interaction.user.name, interaction.user.id)
             await interaction.response.edit_message(
                 content=(interaction.message.content if interaction.message else "") + f"\n\n✅ **Gardé** par {interaction.user.name} → `{chemin_dest}`",
                 view=None,
@@ -106,7 +106,7 @@ class ClipView(discord.ui.View):
             if self.decision_logger:
                 self.decision_logger.log_decision(self.clip_num, "highlight", interaction.user.name)
             if self._struct_log:
-                self._struct_log.log_review(self.clip_num, "highlight", interaction.user.name)
+                self._struct_log.log_review(self.clip_num, "highlight", interaction.user.name, interaction.user.id)
             await interaction.response.edit_message(
                 content=(interaction.message.content if interaction.message else "") + f"\n\n⭐ **Highlight** par {interaction.user.name} → `{chemin_dest}`",
                 view=None,
@@ -123,7 +123,7 @@ class ClipView(discord.ui.View):
         if self.decision_logger:
             self.decision_logger.log_decision(self.clip_num, "supprimer", interaction.user.name)
         if self._struct_log:
-            self._struct_log.log_review(self.clip_num, "supprimer", interaction.user.name)
+            self._struct_log.log_review(self.clip_num, "supprimer", interaction.user.name, interaction.user.id)
         self._supprimer()
         if interaction.message:
             await interaction.message.delete()
@@ -160,7 +160,7 @@ class Renderer:
         self.channel = channel
 
     def _clip_dir(self, sub: str) -> Path:
-        return _CHANNEL(sub)
+        return _CHANNEL(self.channel, sub)
 
     def _resolved_clip_path(self, chemin_clip: str) -> Path | None:
         if not chemin_clip:

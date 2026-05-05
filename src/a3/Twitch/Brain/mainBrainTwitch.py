@@ -65,6 +65,7 @@ class Brain:
         self.decision_logger = decision_logger
         self.channel = channel
         self._struct_log = StructuredLogger(channel=channel)
+        StructuredLogger.set_instance(self._struct_log)
 
         self.clips_detectes: int = 0
         self.clips_rejetes: int = 0
@@ -415,6 +416,16 @@ class Brain:
         log.info(f"{'=' * 55}")
 
     async def stop(self) -> None:
+        # Logger la fin de session
+        self._struct_log.log_event(EventType.SESSION_STOP, {
+            "channel": self.channel,
+            "clips_detectes": self.clips_detectes,
+            "clips_rejetes": self.clips_rejetes,
+            "score_moyen": sum(d["score_final"] for d in self.historique) / len(self.historique) if self.historique else 0,
+            "score_max": max((d["score_final"] for d in self.historique), default=0),
+            "duree_session_sec": (datetime.now() - self.debut_live).total_seconds(),
+        })
+
         self.afficher_bilan_final()
 
         if self.renderer and hasattr(self.renderer, "_channel") and self.renderer._channel:

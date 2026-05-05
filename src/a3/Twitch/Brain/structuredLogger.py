@@ -10,6 +10,7 @@
 
 import json
 import logging
+import os
 import uuid
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
@@ -98,7 +99,7 @@ class StructuredLogger:
         return cls._instance
 
     @classmethod
-    def log_review(cls, clip_num: int, action: str, user: str) -> None:
+    def log_review(cls, clip_num: int, action: str, user: str, user_id: int = 0) -> None:
         """Shortcut global pour logger une review Discord (appelable depuis ClipView)."""
         inst = cls._instance
         if inst is None:
@@ -112,6 +113,7 @@ class StructuredLogger:
             "clip_num": clip_num,
             "action": action,
             "user": user,
+            "user_id": user_id,
         })
 
     def __init__(
@@ -144,10 +146,6 @@ class StructuredLogger:
 
     def _auto_db_handler(self) -> DatabaseHandler:
         """Auto-detects DB: PostgreSQL (DB_TYPE=postgres) > MySQL > Dummy."""
-        import os
-        from dotenv import load_dotenv
-        load_dotenv()
-
         db_type = os.getenv("DB_TYPE", "").lower()
         db_password = os.getenv("DB_PASSWORD", "")
 
