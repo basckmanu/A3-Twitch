@@ -10,6 +10,7 @@ buffer_segments/
 clips_output/
 clips_rejected/
 clips_validated/
+clips_highlights/
 logs/
 decisions/
 debug.log

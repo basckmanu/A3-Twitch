@@ -14,12 +14,15 @@ log = logging.getLogger("A3")
 
 _BASE = Path(__file__).resolve().parents[3]
 
+
 # Dossiers par channel : clips/{channel}/{sub}
 def _channel_clips(channel: str, sub: str) -> Path:
     return _BASE / "clips" / channel / sub
 
+
 def _dossier_decisions(channel: str) -> Path:
     return _BASE / "decisions" / channel
+
 
 CLIP_SUBDIRS = ["output", "validated", "highlights", "rejected"]
 RETENTION_DAYS = 14

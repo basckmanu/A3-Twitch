@@ -10,6 +10,9 @@ from pathlib import Path
 
 import discord
 
+from a3.config import DISCORD_BOT_TOKEN
+from a3.config import DISCORD_CHANNEL_ID as _DISCORD_CHANNEL_ID_STR
+
 log = logging.getLogger("A3")
 
 _BASE = Path(__file__).resolve().parents[3]
@@ -21,8 +24,7 @@ def _CHANNEL(channel: str, sub: str) -> Path:
 #  Configuration                                                     #
 # ------------------------------------------------------------------ #
 
-DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
-DISCORD_CHANNEL_ID = int(os.getenv("DISCORD_CHANNEL_ID", "0"))
+DISCORD_CHANNEL_ID = int(_DISCORD_CHANNEL_ID_STR or 0)
 DISCORD_ALLOWED_USERS = {uid.strip() for uid in os.getenv("DISCORD_ALLOWED_USERS", "").split(",") if uid.strip()}
 
 FICHIER_BLACKLIST = _BASE / "blacklist_mots.json"
@@ -199,8 +201,8 @@ class Renderer:
             log.warning("[Renderer] ⚠️ Pas de channel Discord, clip non envoyé")
             return
 
-        self._clip_counter += 1
-        clip_num = self._clip_counter
+        clip_num = données.get("clip_num") or (self._clip_counter + 1)
+        self._clip_counter = clip_num
 
         score = données.get("score_final", 0.0)
         timestamp = données.get("timestamp", datetime.now())
@@ -215,16 +217,6 @@ class Renderer:
         heure = timestamp.strftime("%H:%M:%S")
 
         filtres_actifs = [f"`{nom}` ({v.get('score_pondéré', 0):.2f})" for nom, v in détails.items() if v.get("score_pondéré", 0) > 0]
-
-        # Log du clip dans le fichier de décisions
-        if self.decision_logger:
-            self.decision_logger.log_clip(
-                clip_num=clip_num,
-                score=score,
-                filtres=détails,
-                chemin=chemin_hq,
-                mot_repetition=mot_rep,
-            )
 
         contenu = f"🎬 **Clip #{clip_num}** — {heure}\nScore : **{score:.2f}** | Déclenché par : `{auteur}` : *{contenu_msg}*\nFiltres : {', '.join(filtres_actifs) or 'aucun'}\n📁 `{chemin_hq}`"
         if mot_rep:

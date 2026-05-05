@@ -33,3 +33,10 @@ CHANNELS = [c.strip() for c in os.getenv("CHANNELS", "").split(",") if c.strip()
 
 # CHANNEL_ID : liste d'IDs numériques → pour BTTV/FFZ/7TV
 CHANNEL_ID = [c.strip() for c in os.getenv("CHANNEL_ID", "").split(",") if c.strip()]
+
+# Base de données (optionnel)
+DB_HOST = os.getenv("DB_HOST", "localhost")
+DB_PORT = int(os.getenv("DB_PORT", "3306"))
+DB_USER = os.getenv("DB_USER", "root")
+DB_PASSWORD = os.getenv("DB_PASSWORD", "")
+DB_NAME = os.getenv("DB_NAME", "a3_db")

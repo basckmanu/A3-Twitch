@@ -256,6 +256,9 @@ class Brain:
             log.info(f"[Brain] ⏱️ Le moment a duré longtemps ! Durée finale : {int(duree_calculee)}s")
 
         donnees = self._donnees_initiales
+        if donnees is None:
+            log.error("[Brain] ❌ _donnees_initiales manquant en fin de clip — clip ignoré")
+            return
         donnees["timestamp"] = datetime.now()
         donnees["score_final"] = self._score_max_clip
         self.historique.append(donnees)
@@ -302,6 +305,7 @@ class Brain:
             )
 
         if self.renderer:
+            donnees["clip_num"] = self.clips_detectes
             asyncio.create_task(self.renderer.output(donnees))
 
     def _log_clip(self, message, score: float, détails: dict, duree: float) -> None:

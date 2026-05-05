@@ -14,17 +14,19 @@ from pathlib import Path
 
 logger = logging.getLogger("A3.StreamCapture")
 
-_BASE = Path(__file__).resolve().parents[4]
 BUFFER_DUREE_MAX_SEC = 360
 DUREE_SEGMENT_SEC = 30
 DELAI_CHAT_VIDEO_SEC = 8
 QUALITE_STREAM = "best"
 
+
 def _channel_dir(channel: str, sub: str) -> Path:
     return _BASE / sub / channel
 
+
 def _segments_dir(channel: str) -> Path:
     return _channel_dir(channel, "buffer_segments")
+
 
 def _clips_dir(channel: str) -> Path:
     return _channel_dir(channel, "clips_output")
@@ -197,7 +199,7 @@ class StreamCapture:
         cmd_main = ["ffmpeg", "-f", "concat", "-safe", "0", "-i", str(chemin_liste), "-ss", str(offset_debut), "-t", str(duree_totale), "-c", "copy", str(chemin_sortie), "-y", "-loglevel", "error"]
 
         nom_stem = Path(nom).stem
-        chemin_preview_pattern = DOSSIER_CLIPS / f"preview_{nom_stem}_%03d.mp4"
+        chemin_preview = DOSSIER_CLIPS / f"preview_{nom_stem}.mp4"
 
         cmd_preview = [
             "ffmpeg",
@@ -215,13 +217,9 @@ class StreamCapture:
             "aac",
             "-b:a",
             "96k",
-            "-f",
-            "segment",
-            "-segment_time",
-            "60",
-            "-reset_timestamps",
-            "1",
-            str(chemin_preview_pattern),
+            "-movflags",
+            "+faststart",
+            str(chemin_preview),
             "-y",
             "-loglevel",
             "error",

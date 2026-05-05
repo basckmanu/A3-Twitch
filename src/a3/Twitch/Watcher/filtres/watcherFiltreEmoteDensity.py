@@ -17,7 +17,7 @@ from a3.Twitch.Watcher.filtres.watcherFiltreBase import FiltreAdaptatif
 
 logger = logging.getLogger("A3")
 
-_CACHE_DIR = Path(__file__).resolve().parents[4] / "cache"
+_CACHE_DIR = Path.cwd() / "cache"
 _CACHE_TTL_SEC = 3600  # 1h avant refresh forcé
 
 
