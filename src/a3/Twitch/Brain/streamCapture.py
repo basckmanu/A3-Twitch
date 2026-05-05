@@ -12,15 +12,19 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+from a3.config import TOKEN
+
 logger = logging.getLogger("A3.StreamCapture")
 
-_BASE = Path(__file__).resolve().parents[4]
 BUFFER_DUREE_MAX_SEC = 360
 DUREE_SEGMENT_SEC = 30
 DELAI_CHAT_VIDEO_SEC = 8
 QUALITE_STREAM = "best"
-DOSSIER_SEGMENTS = _BASE / "buffer_segments"
-DOSSIER_CLIPS = _BASE / "clips_output"
+
+# Token OAuth sans le préfixe "oauth:" pour streamlink
+_OAUTH_TOKEN = TOKEN.removeprefix("oauth:") if TOKEN else ""
+DOSSIER_SEGMENTS = Path.cwd() / "buffer_segments"
+DOSSIER_CLIPS = Path.cwd() / "clips_output"
 
 
 @dataclass
@@ -78,7 +82,7 @@ class StreamCapture:
 
     def _capturer_segments(self):
         pattern_sortie = str(DOSSIER_SEGMENTS / "seg_%Y%m%d_%H%M%S.ts")
-        cmd_streamlink = ["streamlink", "--stdout", "--twitch-disable-ads", self.url_stream, QUALITE_STREAM]
+        cmd_streamlink = ["streamlink", "--stdout", "--twitch-disable-ads", "--twitch-api-header", f"Authorization=OAuth {_OAUTH_TOKEN}", self.url_stream, QUALITE_STREAM]
         cmd_ffmpeg = ["ffmpeg", "-i", "pipe:0", "-c", "copy", "-f", "segment", "-segment_time", str(DUREE_SEGMENT_SEC), "-strftime", "1", "-reset_timestamps", "1", pattern_sortie, "-y", "-loglevel", "error"]
 
         logger.info("[StreamCapture] 🔴 Connexion au stream...")
@@ -188,7 +192,7 @@ class StreamCapture:
         cmd_main = ["ffmpeg", "-f", "concat", "-safe", "0", "-i", str(chemin_liste), "-ss", str(offset_debut), "-t", str(duree_totale), "-c", "copy", str(chemin_sortie), "-y", "-loglevel", "error"]
 
         nom_stem = Path(nom).stem
-        chemin_preview_pattern = DOSSIER_CLIPS / f"preview_{nom_stem}_%03d.mp4"
+        chemin_preview = DOSSIER_CLIPS / f"preview_{nom_stem}.mp4"
 
         cmd_preview = [
             "ffmpeg",
@@ -206,13 +210,9 @@ class StreamCapture:
             "aac",
             "-b:a",
             "96k",
-            "-f",
-            "segment",
-            "-segment_time",
-            "60",
-            "-reset_timestamps",
-            "1",
-            str(chemin_preview_pattern),
+            "-movflags",
+            "+faststart",
+            str(chemin_preview),
             "-y",
             "-loglevel",
             "error",
@@ -250,9 +250,8 @@ class StreamCapture:
         taille_mb = chemin_sortie.stat().st_size / 1024 / 1024
         logger.info(f"[StreamCapture] ✅ Clip HQ généré: {chemin_sortie} ({taille_mb:.1f} MB)")
 
-        previews = [p for p in DOSSIER_CLIPS.iterdir() if p.name.startswith(f"preview_{nom_stem}_") and p.suffix == ".mp4"]
-        previews.sort()
-        logger.info(f"[StreamCapture] 🔍 {len(previews)} morceau(x) de preview trouvé(s)")
+        previews = [chemin_preview] if chemin_preview.exists() else []
+        logger.info(f"[StreamCapture] 🔍 {len(previews)} preview trouvée")
 
         try:
             chemin_liste.unlink()

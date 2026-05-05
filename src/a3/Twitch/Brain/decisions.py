@@ -12,12 +12,12 @@ from pathlib import Path
 
 log = logging.getLogger("A3")
 
-DOSSIER_DECISIONS = Path(__file__).resolve().parents[3] / "decisions"
+DOSSIER_DECISIONS = Path.cwd() / "decisions"
 CLIP_DIRS = [
-    Path(__file__).resolve().parents[3] / "clips_validated",
-    Path(__file__).resolve().parents[3] / "clips_highlights",
-    Path(__file__).resolve().parents[3] / "clips_rejected",
-    Path(__file__).resolve().parents[3] / "clips_output",
+    Path.cwd() / "clips_validated",
+    Path.cwd() / "clips_highlights",
+    Path.cwd() / "clips_rejected",
+    Path.cwd() / "clips_output",
 ]
 RETENTION_DAYS = 14
 CLEANUP_INTERVAL_SEC = 3600

@@ -19,33 +19,35 @@ log = logging.getLogger("A3")
 
 class Watcher:
     def __init__(self) -> None:
-        self.brain = None
+        self._brains: dict[str, object] = {}
         self.renderer = None
+        # Filtres partagés (globaux, tous channels confondus)
         self.filtres: list = []
-        self._calibres: set[str] = set()  # filtres déjà signalés comme calibrés
+        self._calibres: set[str] = set()
         self._tous_calibres: bool = False
         self._ts_debut: float | None = None
         self._monitor_task: asyncio.Task | None = None
 
-    async def start(self, brain, renderer) -> None:
+    async def start(self, brains: dict, renderer) -> None:
         import time
 
-        self.brain = brain
+        self._brains = brains
         self.renderer = renderer
         self._ts_debut = time.time()
 
-        # On laisse les classes utiliser nos excellents paramètres par défaut
         if not CHANNEL_ID or not CLIENT_ID or not CLIENT_SECRET:
             raise EnvironmentError("CHANNEL_ID, CLIENT_ID, CLIENT_SECRET doivent être définis")
 
+        # EmoteDensity et ClipActivity chargent les emotes/clips pour TOUS les channels
         filtre_emote = FiltreEmoteDensity(
-            channel_id=CHANNEL_ID[0] if isinstance(CHANNEL_ID, list) else CHANNEL_ID,
+            channel_id=CHANNEL_ID,
             client_id=CLIENT_ID,
             client_secret=CLIENT_SECRET,
             token=TOKEN or "",
         )
         await filtre_emote.initialiser()
 
+        # ClipActivity surveille tous les channels (prend le premier ID comme référence)
         filtre_clips = FiltreClipActivity(
             channel_id=CHANNEL_ID[0] if isinstance(CHANNEL_ID, list) else CHANNEL_ID,
             client_id=CLIENT_ID,
@@ -62,20 +64,25 @@ class Watcher:
             filtre_clips,
         ]
 
-        # Filtres adaptatifs à surveiller
         self._filtres_adaptatifs = {f.__class__.__name__: f for f in self.filtres if isinstance(f, FiltreAdaptatif)}
 
         nb = len(self._filtres_adaptatifs)
         log.info(f"[Watcher] 🔄 Calibration en cours — {nb} filtres adaptatifs à calibrer...")
         log.info(f"[Watcher] Filtres : {', '.join(self._filtres_adaptatifs.keys())}")
 
-        # Lancer le monitoring de calibration en arrière-plan
         self._monitor_task = asyncio.create_task(self._surveiller_calibration())
 
     async def handle(self, message) -> None:
-        assert self.brain is not None, "handle() appelé avant start()"
+        # Routing : envoie le message au Brain du bon channel
+        channel_name = message.channel.name if message.channel else None
+        brain = self._brains.get(channel_name) if channel_name else None
+        if brain is None:
+            # fallback : premier brain disponible
+            brain = next(iter(self._brains.values()), None)
+        if brain is None:
+            return
         données = await self._collecter(message)
-        await self.brain.analyze(données)
+        await brain.analyze(données)
 
     async def _collecter(self, message) -> dict:
         résultats = []

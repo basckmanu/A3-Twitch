@@ -15,18 +15,6 @@ from a3.Twitch.Watcher.mainWatcherTwitch import Watcher
 
 LOG_DIR = Path("logs")
 
-# ── Helpers ──────────────────────────────────────────────────────────
-
-
-def _creer_dossier(base: Path, nom: str) -> Path:
-    d = base / nom
-    d.mkdir(exist_ok=True)
-    return d
-
-# ------------------------------------------------------------------ #
-#  Setup logging                                                     #
-# ------------------------------------------------------------------ #
-
 
 def setup_logging() -> logging.Logger:
     LOG_DIR.mkdir(exist_ok=True)
@@ -53,11 +41,6 @@ def setup_logging() -> logging.Logger:
     return logger
 
 
-# ------------------------------------------------------------------ #
-#  Bot                                                               #
-# ------------------------------------------------------------------ #
-
-
 class TwitchBot(commands.Bot):
     def __init__(self, logger: logging.Logger, single_channel: str | None = None) -> None:
         self._target_channel = single_channel
@@ -65,22 +48,36 @@ class TwitchBot(commands.Bot):
         super().__init__(token=TOKEN, prefix="?", initial_channels=channels)
 
         self.log = logger
-        channel = channels[0]
-        self.capture = StreamCapture(channel=channel)
-        self.watcher = Watcher()
         self.decision_logger = DecisionLogger()
-        self.brain = Brain(logger=logger, decision_logger=self.decision_logger, channel=channel)
-        self.renderer = Renderer(decision_logger=self.decision_logger, struct_log=self.brain._struct_log)
+
+        # Un StreamCapture et un Brain par channel surveillé
+        self._captures: dict[str, StreamCapture] = {ch: StreamCapture(channel=ch) for ch in channels}
+        self._brains: dict[str, Brain] = {
+            ch: Brain(logger=logger, decision_logger=self.decision_logger, channel=ch)
+            for ch in channels
+        }
+
+        self.renderer = Renderer(
+            decision_logger=self.decision_logger,
+            struct_log=next(iter(self._brains.values()))._struct_log,
+        )
+        self.watcher = Watcher()
 
     async def event_ready(self) -> None:
-        channels_str = ", ".join(self._target_channel or CHANNELS)
-        self.log.info(f"👀 BOT ACTIVÉ : Connecté au chat de {channels_str}")
+        channels_str = ", ".join([self._target_channel] if self._target_channel else CHANNELS)
+        self.log.info(f"👀 BOT ACTIVÉ : {len(self._captures)} channel(s) → {channels_str}")
         self.log.info("-" * 50)
 
         self.decision_logger._start_cleanup()
-        await self.capture.demarrer()
-        await self.watcher.start(self.brain, self.renderer)
-        await self.brain.start(self.capture, self.renderer)
+
+        for ch, capture in self._captures.items():
+            await capture.demarrer()
+
+        await self.watcher.start(self._brains, self.renderer)
+
+        for ch, brain in self._brains.items():
+            await brain.start(self._captures[ch], self.renderer)
+
         await self.renderer.start()
 
     async def event_message(self, message) -> None:
@@ -89,15 +86,13 @@ class TwitchBot(commands.Bot):
         await self.watcher.handle(message)
 
     async def close(self) -> None:
-        await self.capture.arreter()
-        await self.brain.stop()
+        for capture in self._captures.values():
+            await capture.arreter()
+        for brain in self._brains.values():
+            await brain.stop()
         await self.renderer.stop()
         await super().close()
 
-
-# ------------------------------------------------------------------ #
-#  Entrée                                                            #
-# ------------------------------------------------------------------ #
 
 if __name__ == "__main__":
     logger = setup_logging()

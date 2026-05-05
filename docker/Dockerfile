@@ -1,25 +1,28 @@
 # syntax=docker/dockerfile:1
-FROM python:3.11-slim
+FROM python:3.12-slim
 
-# Installer les dépendances système (streamlink + ffmpeg)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
-    streamlink \
     && rm -rf /var/lib/apt/lists/*
+
+# streamlink via pip pour avoir la dernière version (v8+)
+RUN pip install --no-cache-dir streamlink
 
 WORKDIR /app
 
-# Copie uniquement les dépendances Python d'abord (pour le cache Docker)
-COPY src/requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Copie le code source
+# Copie pyproject.toml d'abord pour profiter du cache Docker sur les deps
+COPY pyproject.toml .
 COPY src/ ./src/
 
-# Crée les dossiers nécessaires au runtime
+# Installe le package a3 et toutes ses dépendances
+RUN pip install --no-cache-dir .
+
+# Fichier de blacklist (mots à ignorer)
+COPY blacklist_mots.json .
+
+# Crée les dossiers runtime
 RUN mkdir -p logs buffer_segments clips_output clips_validated clips_highlights clips_rejected decisions cache
 
-# Wrapper start
 COPY docker/start.sh /start.sh
 RUN chmod +x /start.sh
 
