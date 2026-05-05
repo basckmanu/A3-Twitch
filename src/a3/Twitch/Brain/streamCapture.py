@@ -14,7 +14,7 @@ from pathlib import Path
 
 logger = logging.getLogger("A3.StreamCapture")
 
-_BASE = Path(__file__).resolve().parents[3]
+_BASE = Path(__file__).resolve().parents[4]
 
 BUFFER_DUREE_MAX_SEC = 360
 DUREE_SEGMENT_SEC = 30
