@@ -259,7 +259,7 @@ class StreamCapture:
         taille_mb = chemin_sortie.stat().st_size / 1024 / 1024
         logger.info(f"[StreamCapture] ✅ Clip HQ généré: {chemin_sortie} ({taille_mb:.1f} MB)")
 
-        previews = [p for p in self._clips_dir.iterdir() if p.name.startswith(f"preview_{nom_stem}") and p.name.endswith(".mp4")]
+        previews = [p for p in self._clips_dir.iterdir() if p.name.startswith(f"preview_{nom_stem}.") and p.name.endswith(".mp4")]
         previews.sort()
         logger.info(f"[StreamCapture] 🔍 {len(previews)} morceau(x) de preview trouvé(s)")
 

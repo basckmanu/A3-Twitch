@@ -74,8 +74,8 @@ class PostgresHandler(DatabaseHandler):
                 password=self._password,
                 dbname=self._database,
                 sslmode=self._sslmode,
-                autocommit=False,
             )
+            self._db.autocommit = False
             self._cursor = self._db.cursor()
             self._psycopg2_extras = psycopg2.extras
             log.info(f"[PostgresHandler] ✅ Connecté à {self._host}:{self._port}/{self._database} (sslmode={self._sslmode})")
