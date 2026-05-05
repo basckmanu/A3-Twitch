@@ -125,6 +125,11 @@ class StructuredLogger:
     ) -> None:
         self.channel = channel
         self.session_id = session_id or str(uuid.uuid4())[:8]
+
+        # Logging standard pour la console (humain lisible) — doit être avant _auto_db_handler
+        self._console = logging.getLogger(f"A3.{channel}.structured")
+        self._console.setLevel(logging.INFO)
+
         self._db = db_handler or self._auto_db_handler()
         self._buffer: list[dict] = []
 
@@ -139,10 +144,6 @@ class StructuredLogger:
         ts = datetime.now(timezone.utc).strftime("%Y-%m-%d_%H-%M-%S")
         self._file_path = self._output_dir / f"a3_{channel}_{ts}_{self.session_id}.jsonl"
         self._file = open(self._file_path, "a", encoding="utf-8")
-
-        # Logging standard pour la console (humain lisible)
-        self._console = logging.getLogger(f"A3.{channel}.structured")
-        self._console.setLevel(logging.INFO)
 
     def _auto_db_handler(self) -> DatabaseHandler:
         """Auto-detects DB: PostgreSQL (DB_TYPE=postgres) > MySQL > Dummy."""
