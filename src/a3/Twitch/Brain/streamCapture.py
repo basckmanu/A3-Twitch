@@ -253,8 +253,11 @@ class StreamCapture:
 
         ok_preview = await _run_ffmpeg(cmd_preview, 300, "previews")
 
-        if not ok_preview:
+        if not ok_preview or not chemin_preview.exists():
             logger.warning("[StreamCapture] ⚠️ Échec génération previews — clip quand même créé")
+            previews = []
+        else:
+            previews = [chemin_preview]
 
         taille_mb = chemin_sortie.stat().st_size / 1024 / 1024
         logger.info(f"[StreamCapture] ✅ Clip HQ généré: {chemin_sortie} ({taille_mb:.1f} MB)")
