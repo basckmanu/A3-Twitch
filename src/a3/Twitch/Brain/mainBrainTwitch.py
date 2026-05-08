@@ -12,6 +12,7 @@ from collections import Counter, deque
 from datetime import datetime
 
 from a3.Twitch.Brain.structuredLogger import EventType, StructuredLogger
+from a3.utils.privacy import pseudonymize
 
 log = logging.getLogger("A3")
 
@@ -87,6 +88,7 @@ class Brain:
         # Deduplication : garde les hashes des moments récents (60s)
         self._moments_recents: deque[tuple[float, str]] = deque()
         self._fenetre_dedup_sec: float = 60.0
+        self._moments_last_purge: float = 0.0
 
     async def start(self, capture=None, renderer=None) -> None:
         self.capture = capture
@@ -178,13 +180,15 @@ class Brain:
         self.is_recording = True
         self._score_max_clip = score_final
 
-        auteur = message.author.name if message else ""
+        auteur_raw = message.author.name if message else ""
+        auteur_hash = pseudonymize(auteur_raw)
         self._struct_log.log_clip_detected(
             clip_num=self.clips_detectes,
             score=score_final,
             détails=détails,
-            auteur=auteur,
-            message=message.content if message else "",
+            auteur=auteur_hash,
+            repetition_word=données.get("mot_repetition"),  # hash du mot dominant
+            message=message.content[:80] if message else "",
         )
 
         self._ts_debut_record = maintenant - DECALAGE_RECORD_AVANT_SEC
@@ -206,10 +210,11 @@ class Brain:
 
     def _est_duplicate(self, moment_hash: str, ts: float) -> bool:
         """Retourne True si un moment avec ce hash existe dans la fenêtre deduplication."""
-        # Purge les vieux
+        # Purge les vieux + purge périodique même si pas d'activité (évite fuite mémoire)
         limite = ts - self._fenetre_dedup_sec
-        while self._moments_recents and self._moments_recents[0][0] < limite:
-            self._moments_recents.popleft()
+        self._moments_recents = deque(
+            (t, h) for t, h in self._moments_recents if t >= limite
+        )
 
         # Vérifie si déjà vu
         for _, h in self._moments_recents:
@@ -310,13 +315,15 @@ class Brain:
             asyncio.create_task(self.renderer.output(donnees))
 
     def _log_clip(self, message, score: float, détails: dict, duree: float) -> None:
+        auteur_name = message.author.name if message and hasattr(message, "author") and message.author else "inconnu"
+        msg_content = message.content[:80] if message and hasattr(message, "content") else ""
         lignes = [
             f"\n{'=' * 55}",
             f"[Brain] 🎬 CLIP #{self.clips_detectes} VALIDÉ ET DÉCOUPÉ",
             f"  Heure   : {datetime.now().strftime('%H:%M:%S')}",
             f"  Durée   : {int(duree)} secondes",
-            f"  Auteur  : {message.author.name}",
-            f"  Message : {message.content[:80]}",
+            f"  Auteur  : {auteur_name}",
+            f"  Message : {msg_content}",
             f"  Score   : {score:.2f} / {self.seuil} requis",
             f"  Cooldown suivant : {self._cooldown_actuel}s",
             "  Filtres actifs au déclenchement :",

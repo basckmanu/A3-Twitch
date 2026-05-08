@@ -170,15 +170,11 @@ class FiltreEmoteDensity(FiltreAdaptatif):
             await self._renouveler_token()
 
         # 1. Essayer le cache disque d'abord (rapide)
-        if self._load_cache():
-            # Lancer refresh en arrière-plan
+        cache_valide = self._load_cache()
+        if cache_valide:
+            # Lancer refresh en arrière-plan uniquement — pas de foreground load
+            # (le cache est encore frais, le refresh.background s'occupera de la mise à jour)
             self._refresh_task = asyncio.create_task(self._refresh_periodique())
-            # Refresh en avant-plan pour mettre à jour si le cache est un peu vieux
-            try:
-                async with aiohttp.ClientSession() as session:
-                    await self._charger_toutes_emotes(session, dans_cache=True)
-            except Exception as e:
-                logger.warning(f"[EmoteDensity] ⚠️ Refresh après cache échoué: {e}")
             return
 
         # Pas de cache : chargement complet

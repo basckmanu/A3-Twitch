@@ -16,6 +16,11 @@ from a3.Twitch.Watcher.filtres.watcherFiltreUniqueAuthors import FiltreUniqueAut
 
 log = logging.getLogger("A3")
 
+# ------------------------------------------------------------------ #
+#  Pseudo-anonymisation                                               #
+# ------------------------------------------------------------------ #
+from a3.utils.privacy import pseudonymize
+
 
 class Watcher:
     def __init__(self) -> None:
@@ -99,17 +104,17 @@ class Watcher:
                 "score_pondéré": score,
                 "passé": score > 0.0,
             }
-        mot_repetition = None
+        mot_repetition_hash = None
         for filtre in self.filtres:
-            if isinstance(filtre, FiltreRepetition) and hasattr(filtre, "_dernier_mot_dominant"):
-                mot_repetition = filtre._dernier_mot_dominant or None
+            if isinstance(filtre, FiltreRepetition) and hasattr(filtre, "_dernier_mot_dominant_hash"):
+                mot_repetition_hash = filtre._dernier_mot_dominant_hash or None
                 break
 
         return {
-            "message": message,
+            "message": message,  # message object kept for Renderer (Discord display only)
             "timestamp": datetime.now(),
             "détails": détails,
-            "mot_repetition": mot_repetition,
+            "mot_repetition": mot_repetition_hash,  # pseudonymized
             "channel": channel_name,
         }
 

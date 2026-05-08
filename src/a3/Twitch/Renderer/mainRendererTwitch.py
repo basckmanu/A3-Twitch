@@ -24,7 +24,11 @@ def _CHANNEL(channel: str, sub: str) -> Path:
 #  Configuration                                                     #
 # ------------------------------------------------------------------ #
 
-DISCORD_CHANNEL_ID = int(_DISCORD_CHANNEL_ID_STR or 0)
+try:
+    DISCORD_CHANNEL_ID = int(_DISCORD_CHANNEL_ID_STR or 0)
+except ValueError:
+    DISCORD_CHANNEL_ID = 0
+    log.warning("[Renderer] ⚠️ DISCORD_CHANNEL_ID invalide, mis à 0")
 DISCORD_ALLOWED_USERS = {uid.strip() for uid in os.getenv("DISCORD_ALLOWED_USERS", "").split(",") if uid.strip()}
 
 FICHIER_BLACKLIST = _BASE / "blacklist_mots.json"
@@ -71,6 +75,10 @@ class ClipView(discord.ui.View):
         self.decision_logger = decision_logger
         self.mot_repetition = mot_repetition
         self._struct_log = structured_logger
+        # Discord button custom_id must be unique per clip to avoid collisions
+        self._custom_id_garder = f"garder_{clip_num}"
+        self._custom_id_highlight = f"highlight_{clip_num}"
+        self._custom_id_supprimer = f"supprimer_{clip_num}"
 
     def _dest_dir(self, sub: str) -> Path:
         d = _CHANNEL(self.channel, sub)
@@ -79,6 +87,8 @@ class ClipView(discord.ui.View):
 
     @discord.ui.button(label="✅ Garder", style=discord.ButtonStyle.success, custom_id="garder")
     async def garder(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        # Override custom_id to be unique per clip (avoids Discord view collision)
+        button.custom_id = f"garder_{self.clip_num}"
         if DISCORD_ALLOWED_USERS and interaction.user.id not in DISCORD_ALLOWED_USERS:
             await interaction.response.send_message("⛔ Pas autorisé.", ephemeral=True)
             return
@@ -98,6 +108,7 @@ class ClipView(discord.ui.View):
 
     @discord.ui.button(label="⭐ Highlight", style=discord.ButtonStyle.primary, custom_id="highlight")
     async def highlight(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        button.custom_id = f"highlight_{self.clip_num}"
         if DISCORD_ALLOWED_USERS and interaction.user.id not in DISCORD_ALLOWED_USERS:
             await interaction.response.send_message("⛔ Pas autorisé.", ephemeral=True)
             return
@@ -117,6 +128,7 @@ class ClipView(discord.ui.View):
 
     @discord.ui.button(label="🗑️ Supprimer", style=discord.ButtonStyle.danger, custom_id="supprimer")
     async def supprimer(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        button.custom_id = f"supprimer_{self.clip_num}"
         if DISCORD_ALLOWED_USERS and interaction.user.id not in DISCORD_ALLOWED_USERS:
             await interaction.response.send_message("⛔ Pas autorisé.", ephemeral=True)
             return
@@ -239,7 +251,9 @@ class Renderer:
 
     async def _envoyer_avec_previews(self, contenu: str, previews: list, view: ClipView) -> None:
         fichiers = []
-        assert self._channel is not None, "_envoyer_avec_previews appelé sans channel"
+        if self._channel is None:
+            log.error("[Renderer] ❌ _envoyer_avec_previews appelé sans channel")
+            return
         try:
             for p in [Path(p) for p in previews[:10]]:
                 if p.exists():

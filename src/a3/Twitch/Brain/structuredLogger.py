@@ -100,10 +100,13 @@ class StructuredLogger:
 
     @classmethod
     def log_review(cls, clip_num: int, action: str, user: str, user_id: int = 0) -> None:
-        """Shortcut global pour logger une review Discord (appelable depuis ClipView)."""
+        """Shortcut global pour logger une review Discord (appelable depuis ClipView).
+        NOTE: le champ `user` est pseudonymizé avant écriture en DB/JSON."""
         inst = cls._instance
         if inst is None:
             return
+        from a3.utils.privacy import pseudonymize
+        user_hash = pseudonymize(user) or "unknown"
         event_map = {
             "garder": EventType.REVIEW_GARDER,
             "highlight": EventType.REVIEW_HIGHLIGHT,
@@ -112,7 +115,7 @@ class StructuredLogger:
         inst.log_event(event_map.get(action, EventType.INFO), {
             "clip_num": clip_num,
             "action": action,
-            "user": user,
+            "user": user_hash,  # pseudonymized — never stored in clear
             "user_id": user_id,
         })
 
@@ -214,13 +217,14 @@ class StructuredLogger:
 
     # ── Convenience shortcuts ────────────────────────────────────
 
-    def log_clip_detected(self, clip_num: int, score: float, détails: dict, auteur: str, message: str) -> None:
+    def log_clip_detected(self, clip_num: int, score: float, détails: dict, auteur: str, repetition_word: str | None, message: str) -> None:
         self.log_event(EventType.CLIP_DETECTED, {
             "clip_num": clip_num,
             "score": round(score, 4),
             "filtres": {k: round(v.get("score_pondéré", 0.0), 4) for k, v in détails.items()},
-            "auteur": auteur,
-            "message_excerpt": message[:100],
+            "auteur": auteur,  # pseudonymized
+            "repetition_word": repetition_word,  # pseudonymized
+            "message_excerpt": message[:80],
         })
 
     def log_clip_generated(self, clip_num: int, score: float, chemin: str | None, duree_sec: float) -> None:
@@ -232,6 +236,8 @@ class StructuredLogger:
         })
 
     def _log_review_instance(self, clip_num: int, action: str, user: str) -> None:
+        from a3.utils.privacy import pseudonymize
+        user_hash = pseudonymize(user) or "unknown"
         event_map = {
             "garder": EventType.REVIEW_GARDER,
             "highlight": EventType.REVIEW_HIGHLIGHT,
@@ -240,7 +246,7 @@ class StructuredLogger:
         self.log_event(event_map.get(action, EventType.INFO), {
             "clip_num": clip_num,
             "action": action,
-            "user": user,
+            "user": user_hash,
         })
 
     def log_filter_score(self, filtre: str, score_raw: float, score_pondere: float, auteur: str) -> None:

@@ -57,7 +57,7 @@ class TwitchBot(commands.Bot):
         self.renderer = Renderer(
             channel=channels[0] if channels else "unknown",
             decision_logger=self.decision_logger,
-            struct_log=next(iter(self._brains.values()))._struct_log,
+            struct_log=next(iter(self._brains.values()), None)._struct_log if self._brains else None,
         )
         self.watcher = Watcher()
 

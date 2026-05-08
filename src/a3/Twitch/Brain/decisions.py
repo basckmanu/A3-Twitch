@@ -2,13 +2,17 @@
 #
 # Logger des décisions de review (garder / highlight / supprimer)
 # Stocke un fichier JSON par session dans le dossier decisions/
+# IMPORTANT: Aucun identifiant utilisateur en clair — tous pseudonymizés.
 
 import asyncio
 import json
 import logging
+import os
 import time
 from datetime import datetime
 from pathlib import Path
+
+from a3.utils.privacy import pseudonymize
 
 log = logging.getLogger("A3")
 
@@ -41,7 +45,7 @@ class DecisionLogger:
         self._dossier = _dossier_decisions(channel)
         self._dossier.mkdir(parents=True, exist_ok=True)
         self._session_debut = datetime.now()
-        self._nom_fichier = self._dossier / f"session_{self._session_debut.strftime('%Y-%m-%d_%H-%M-%S')}.json"
+        self._nom_fichier = self._dossier / f"session_{self._session_debut.strftime('%Y-%m-%d_%H-%M-%S')}.json".replace(":", "-")
         self._clips: dict[int, dict] = {}
         self._retention_days = retention_days
         self._cleanup_task: asyncio.Task | None = None
@@ -119,11 +123,12 @@ class DecisionLogger:
             log.warning(f"[Decisions] ⚠️ Clip #{clip_num} introuvable pour logguer la décision")
             return
 
+        user_hash = pseudonymize(user) or "unknown"
         self._clips[clip_num]["decision"] = decision
-        self._clips[clip_num]["decision_user"] = user
+        self._clips[clip_num]["decision_user"] = user_hash  # pseudonymized
         self._clips[clip_num]["decision_timestamp"] = datetime.now().isoformat()
         self._sauvegarder()
-        log.info(f"[Decisions] ✅ Clip #{clip_num} — {decision} par {user} (score: {self._clips[clip_num]['score']:.2f})")
+        log.info(f"[Decisions] ✅ Clip #{clip_num} — {decision} par [hash:{user_hash}] (score: {self._clips[clip_num]['score']:.2f})")
 
     def _sauvegarder(self) -> None:
         temp = self._nom_fichier.with_suffix(".tmp")
@@ -139,6 +144,8 @@ class DecisionLogger:
                     ensure_ascii=False,
                     indent=2,
                 )
+                f.flush()
+                os.fsync(f.fileno())
             temp.replace(self._nom_fichier)
         except Exception as e:
             log.error(f"[Decisions] ❌ Erreur sauvegarde : {e}")

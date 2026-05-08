@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from a3.Twitch.Brain.structuredLogger import DatabaseHandler, EventType
+from a3.utils.privacy import pseudonymize
 
 log = logging.getLogger("A3")
 
@@ -141,9 +142,8 @@ class PostgresHandler(DatabaseHandler):
                     score_repetition DECIMAL(5,4),
                     score_clip_activity DECIMAL(5,4),
 
-                    auteur VARCHAR(128),
-                    message_excerpt VARCHAR(500),
-                    mot_repetition VARCHAR(128),
+                    auteur_hash     CHAR(16),
+                    repetition_word CHAR(16),
                     filtres_actifs TEXT[],
 
                     timestamp_trigger TIMESTAMPTZ NOT NULL,
@@ -151,8 +151,8 @@ class PostgresHandler(DatabaseHandler):
                     timestamp_creation TIMESTAMPTZ DEFAULT NOW(),
 
                     decision VARCHAR(20),
-                    decision_user VARCHAR(128),
-                    decision_user_id BIGINT,
+                    reviewer_id BIGINT,
+                    reviewer_hash CHAR(16),
                     timestamp_decision TIMESTAMPTZ
                 )
             """)
@@ -166,12 +166,12 @@ class PostgresHandler(DatabaseHandler):
                     channel VARCHAR(128) NOT NULL,
                     action VARCHAR(20) NOT NULL,
                     user_id BIGINT NOT NULL,
-                    username VARCHAR(128) NOT NULL,
+                    username_hash CHAR(16) NOT NULL,
                     timestamp_review TIMESTAMPTZ DEFAULT NOW()
                 )
             """)
 
-            # Table filter_events
+            # Table filter_events (auteur_hash = SHA-256 pseudonymized, message_excerpt retiré)
             self._cursor.execute("""
                 CREATE TABLE IF NOT EXISTS filter_events (
                     id BIGSERIAL PRIMARY KEY,
@@ -185,8 +185,7 @@ class PostgresHandler(DatabaseHandler):
                     mean_baseline DECIMAL(10,4),
                     std_baseline DECIMAL(10,4),
                     seuil DECIMAL(10,4),
-                    auteur VARCHAR(128),
-                    message_excerpt VARCHAR(200),
+                    auteur_hash CHAR(16),
                     level VARCHAR(10) DEFAULT 'INFO',
                     data JSONB,
                     timestamp TIMESTAMPTZ DEFAULT NOW()
@@ -318,39 +317,40 @@ class PostgresHandler(DatabaseHandler):
 
     def _inserer_event(self, event: dict) -> None:
         """Route chaque event vers la bonne table."""
-        event_type = event.get("event_type", "")
-        data = event.get("data", {})
-        channel = event.get("channel", "")
-        session_id = event.get("session_id", "") or self._current_session_id or ""
+        try:
+            event_type = event.get("event_type", "")
+            data = event.get("data", {})
+            channel = event.get("channel", "")
+            session_id = event.get("session_id", "") or self._current_session_id or ""
 
-        # INSERT dans la table principale filter_events (journalisation complète)
-        insert_sql = """
-            INSERT INTO filter_events (session_id, channel, event_type, auteur, message_excerpt, level, data, timestamp)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-        """
-        values = (
-            session_id,
-            channel,
-            event_type,
-            data.get("auteur", ""),
-            data.get("message_excerpt", ""),
-            event.get("level", "INFO"),
-            json.dumps(data, default=str),
-            event.get("timestamp", datetime.now(timezone.utc)),
-        )
-        self._cursor.execute(insert_sql, values)
+            auteur_hash = pseudonymize(data.get("auteur", "")) or ""
+            values = (
+                session_id,
+                channel,
+                event_type,
+                auteur_hash,
+                event.get("level", "INFO"),
+                json.dumps(data, default=str),
+                event.get("timestamp", datetime.now(timezone.utc)),
+            )
+            self._cursor.execute(
+                "INSERT INTO filter_events (session_id, channel, event_type, auteur_hash, level, data, timestamp) VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                values,
+            )
 
-        # Route vers tables spécialisées
-        if event_type == EventType.SESSION_START:
-            self._insert_session(event, data, session_id)
-        elif event_type == EventType.SESSION_STOP:
-            self._update_session_fin(event, data, session_id)
-        elif event_type == EventType.CLIP_DETECTED:
-            self._insert_clip(event, data, session_id)
-        elif event_type in (EventType.REVIEW_GARDER, EventType.REVIEW_HIGHLIGHT, EventType.REVIEW_SUPPRIMER):
-            self._insert_review(event, data, session_id, event_type)
-        elif event_type == EventType.FILTER_CALIBRATED:
-            self._insert_calibration(event, data, session_id)
+            # Route vers tables spécialisées
+            if event_type == EventType.SESSION_START:
+                self._insert_session(event, data, session_id)
+            elif event_type == EventType.SESSION_STOP:
+                self._update_session_fin(event, data, session_id)
+            elif event_type == EventType.CLIP_DETECTED:
+                self._insert_clip(event, data, session_id)
+            elif event_type in (EventType.REVIEW_GARDER, EventType.REVIEW_HIGHLIGHT, EventType.REVIEW_SUPPRIMER):
+                self._insert_review(event, data, session_id, event_type)
+            elif event_type == EventType.FILTER_CALIBRATED:
+                self._insert_calibration(event, data, session_id)
+        except Exception as e:
+            log.debug(f"[PostgresHandler] ⚠️ _inserer_event échoué: {e}")
 
     def _insert_session(self, event: dict, data: dict, session_id: str) -> None:
         """Insère une nouvelle session."""
@@ -401,10 +401,10 @@ class PostgresHandler(DatabaseHandler):
             insert_sql = """
                 INSERT INTO clips (
                     clip_num, session_id, channel, score_final,
-                    auteur, message_excerpt, mot_repetition, filtres_actifs,
+                    auteur_hash, repetition_word, filtres_actifs,
                     timestamp_trigger, score_unique_authors, score_message_rate,
                     score_emotions, score_emote_density, score_repetition, score_clip_activity
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """
 
             filtres = data.get("filtres", {})
@@ -414,9 +414,10 @@ class PostgresHandler(DatabaseHandler):
                 session_id,
                 event.get("channel", ""),
                 data.get("score", 0),
-                data.get("auteur", ""),
-                data.get("message_excerpt", ""),
-                data.get("mot_repetition"),
+                # auteur_hash CHAR(16), pseudonymized par Brain
+                data.get("auteur"),
+                # CHAR(16), hash du mot dominant
+                data.get("repetition_word"),
                 list(filtres.keys()) if filtres else [],
                 event.get("timestamp", datetime.now(timezone.utc)),
                 filtres.get("FiltreUniqueAuthors", {}).get("score_pondere", 0) if isinstance(filtres.get("FiltreUniqueAuthors"), dict) else 0,
@@ -440,12 +441,13 @@ class PostgresHandler(DatabaseHandler):
             action = action_map.get(event_type, "")
 
             insert_sql = """
-                INSERT INTO reviews (clip_id, session_id, channel, action, user_id, username, timestamp_review)
+                INSERT INTO reviews (clip_id, session_id, channel, action, user_id, username_hash, timestamp_review)
                 VALUES (
                     (SELECT id FROM clips WHERE clip_num = %s AND session_id = %s ORDER BY timestamp_creation DESC LIMIT 1),
                     %s, %s, %s, %s, %s, %s
                 )
             """
+            username_hash = pseudonymize(data.get("user", "")) or "unknown"
             self._cursor.execute(insert_sql, (
                 data.get("clip_num"),
                 session_id,
@@ -453,7 +455,7 @@ class PostgresHandler(DatabaseHandler):
                 event.get("channel", ""),
                 action,
                 data.get("user_id", 0),
-                data.get("user", ""),
+                username_hash,
                 event.get("timestamp", datetime.now(timezone.utc)),
             ))
         except Exception as e:

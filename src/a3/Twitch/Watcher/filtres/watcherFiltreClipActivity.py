@@ -97,10 +97,17 @@ class FiltreClipActivity:
             ) as resp:
                 if resp.status == 401:
                     await self._renouveler_token()
-                    return
-                if resp.status != 200:
-                    return
-                data = await resp.json()
+                    # Retry once with new token
+                    async with self._session.get(
+                        "https://api.twitch.tv/helix/clips",
+                        headers={"Authorization": f"Bearer {self._token}", "Client-Id": self._client_id},
+                        params=params,
+                    ) as resp_retry:
+                        if resp_retry.status != 200:
+                            return
+                        data = await resp_retry.json()
+                else:
+                    data = await resp.json()
 
             clips = data.get("data", [])
             for clip in clips:
