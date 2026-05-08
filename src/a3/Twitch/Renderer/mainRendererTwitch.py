@@ -225,7 +225,7 @@ class Renderer:
         mot_rep = données.get("mot_repetition")
 
         auteur = message.author.name if message else "inconnu"
-        streamer = self.channel or "inconnu"
+        streamer = données.get("channel") or self.channel or "inconnu"
         contenu_msg = message.content[:80] if message else ""
         heure = timestamp.strftime("%H:%M:%S")
 
