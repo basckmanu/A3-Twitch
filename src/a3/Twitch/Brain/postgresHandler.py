@@ -104,7 +104,7 @@ class PostgresHandler(DatabaseHandler):
                 CREATE TABLE IF NOT EXISTS sessions (
                     id BIGSERIAL PRIMARY KEY,
                     session_id VARCHAR(16) UNIQUE NOT NULL,
-                    channel VARCHAR(128) NOT NULL,
+                    channel_id UUID NOT NULL,
                     debut_session TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                     fin_session TIMESTAMPTZ,
                     statut VARCHAR(20) DEFAULT 'active',
@@ -131,7 +131,7 @@ class PostgresHandler(DatabaseHandler):
                     id BIGSERIAL PRIMARY KEY,
                     clip_num INT NOT NULL,
                     session_id VARCHAR(16) NOT NULL REFERENCES sessions(session_id),
-                    channel VARCHAR(128) NOT NULL,
+                    channel_id UUID NOT NULL,
                     chemin_fichier VARCHAR(512),
 
                     score_final DECIMAL(5,4) NOT NULL,
@@ -163,7 +163,7 @@ class PostgresHandler(DatabaseHandler):
                     id BIGSERIAL PRIMARY KEY,
                     clip_id BIGINT REFERENCES clips(id) ON DELETE CASCADE,
                     session_id VARCHAR(16) NOT NULL,
-                    channel VARCHAR(128) NOT NULL,
+                    channel_id UUID NOT NULL,
                     action VARCHAR(20) NOT NULL,
                     user_id BIGINT NOT NULL,
                     username_hash CHAR(16) NOT NULL,
@@ -176,7 +176,7 @@ class PostgresHandler(DatabaseHandler):
                 CREATE TABLE IF NOT EXISTS filter_events (
                     id BIGSERIAL PRIMARY KEY,
                     session_id VARCHAR(16) NOT NULL,
-                    channel VARCHAR(128) NOT NULL,
+                    channel_id UUID NOT NULL,
                     event_type VARCHAR(64) NOT NULL,
                     filtre_nom VARCHAR(64),
                     score_raw DECIMAL(10,4),
@@ -197,7 +197,7 @@ class PostgresHandler(DatabaseHandler):
                 CREATE TABLE IF NOT EXISTS calibration (
                     id BIGSERIAL PRIMARY KEY,
                     session_id VARCHAR(16) NOT NULL,
-                    channel VARCHAR(128) NOT NULL,
+                    channel_id UUID NOT NULL,
                     filtre_nom VARCHAR(64) NOT NULL,
                     est_calibre BOOLEAN DEFAULT FALSE,
                     samples_count INT DEFAULT 0,
@@ -217,7 +217,7 @@ class PostgresHandler(DatabaseHandler):
                 CREATE TABLE IF NOT EXISTS stream_events (
                     id BIGSERIAL PRIMARY KEY,
                     session_id VARCHAR(16),
-                    channel VARCHAR(128),
+                    channel_id UUID,
                     event_type VARCHAR(64) NOT NULL,
                     level VARCHAR(10) DEFAULT 'INFO',
                     message TEXT,
@@ -233,7 +233,7 @@ class PostgresHandler(DatabaseHandler):
                 CREATE TABLE IF NOT EXISTS snapshots (
                     id BIGSERIAL PRIMARY KEY,
                     session_id VARCHAR(16) NOT NULL,
-                    channel VARCHAR(128) NOT NULL,
+                    channel_id UUID NOT NULL,
                     timestamp_snapshot TIMESTAMPTZ NOT NULL,
                     messages_count INT DEFAULT 0,
                     auteurs_uniques_count INT DEFAULT 0,
@@ -248,9 +248,9 @@ class PostgresHandler(DatabaseHandler):
             """)
 
             # Index
-            self._cursor.execute("CREATE INDEX IF NOT EXISTS idx_sessions_channel ON sessions(channel)")
+            self._cursor.execute("CREATE INDEX IF NOT EXISTS idx_sessions_channel_id ON sessions(channel_id)")
             self._cursor.execute("CREATE INDEX IF NOT EXISTS idx_clips_session ON clips(session_id)")
-            self._cursor.execute("CREATE INDEX IF NOT EXISTS idx_clips_channel ON clips(channel)")
+            self._cursor.execute("CREATE INDEX IF NOT EXISTS idx_clips_channel_id ON clips(channel_id)")
             self._cursor.execute("CREATE INDEX IF NOT EXISTS idx_reviews_clip ON reviews(clip_id)")
             self._cursor.execute("CREATE INDEX IF NOT EXISTS idx_filter_events_session ON filter_events(session_id)")
             self._cursor.execute("CREATE INDEX IF NOT EXISTS idx_stream_events_session ON stream_events(session_id)")
@@ -320,13 +320,13 @@ class PostgresHandler(DatabaseHandler):
         try:
             event_type = event.get("event_type", "")
             data = event.get("data", {})
-            channel = event.get("channel", "")
+            channel_id = event.get("channel_id", "") or ""
             session_id = event.get("session_id", "") or self._current_session_id or ""
 
             auteur_hash = pseudonymize(data.get("auteur", "")) or ""
             values = (
                 session_id,
-                channel,
+                channel_id,
                 event_type,
                 auteur_hash,
                 event.get("level", "INFO"),
@@ -334,7 +334,7 @@ class PostgresHandler(DatabaseHandler):
                 event.get("timestamp", datetime.now(timezone.utc)),
             )
             self._cursor.execute(
-                "INSERT INTO filter_events (session_id, channel, event_type, auteur_hash, level, data, timestamp) VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                "INSERT INTO filter_events (session_id, channel_id, event_type, auteur_hash, level, data, timestamp) VALUES (%s, %s, %s, %s, %s, %s, %s)",
                 values,
             )
 
@@ -356,13 +356,13 @@ class PostgresHandler(DatabaseHandler):
         """Insère une nouvelle session."""
         try:
             insert_sql = """
-                INSERT INTO sessions (session_id, channel, debut_session, statut, seuil_clip, poids_filtres, version_app)
+                INSERT INTO sessions (session_id, channel_id, debut_session, statut, seuil_clip, poids_filtres, version_app)
                 VALUES (%s, %s, %s, 'active', %s, %s, %s)
                 ON CONFLICT (session_id) DO NOTHING
             """
             self._cursor.execute(insert_sql, (
                 session_id,
-                event.get("channel", ""),
+                event.get("channel_id", ""),
                 event.get("timestamp", datetime.now(timezone.utc)),
                 data.get("seuil"),
                 json.dumps(data.get("poids", {}), default=str),
@@ -400,7 +400,7 @@ class PostgresHandler(DatabaseHandler):
         try:
             insert_sql = """
                 INSERT INTO clips (
-                    clip_num, session_id, channel, score_final,
+                    clip_num, session_id, channel_id, score_final,
                     auteur_hash, repetition_word, filtres_actifs,
                     timestamp_trigger, score_unique_authors, score_message_rate,
                     score_emotions, score_emote_density, score_repetition, score_clip_activity
@@ -412,7 +412,7 @@ class PostgresHandler(DatabaseHandler):
             self._cursor.execute(insert_sql, (
                 data.get("clip_num"),
                 session_id,
-                event.get("channel", ""),
+                event.get("channel_id", ""),
                 data.get("score", 0),
                 # auteur_hash CHAR(16), pseudonymized par Brain
                 data.get("auteur"),
@@ -441,7 +441,7 @@ class PostgresHandler(DatabaseHandler):
             action = action_map.get(event_type, "")
 
             insert_sql = """
-                INSERT INTO reviews (clip_id, session_id, channel, action, user_id, username_hash, timestamp_review)
+                INSERT INTO reviews (clip_id, session_id, channel_id, action, user_id, username_hash, timestamp_review)
                 VALUES (
                     (SELECT id FROM clips WHERE clip_num = %s AND session_id = %s ORDER BY timestamp_creation DESC LIMIT 1),
                     %s, %s, %s, %s, %s, %s
@@ -452,7 +452,7 @@ class PostgresHandler(DatabaseHandler):
                 data.get("clip_num"),
                 session_id,
                 session_id,
-                event.get("channel", ""),
+                event.get("channel_id", ""),
                 action,
                 data.get("user_id", 0),
                 username_hash,
@@ -466,7 +466,7 @@ class PostgresHandler(DatabaseHandler):
         try:
             insert_sql = """
                 INSERT INTO calibration (
-                    session_id, channel, filtre_nom, est_calibre, samples_count,
+                    session_id, channel_id, filtre_nom, est_calibre, samples_count,
                     timestamp_calibration, mean, std, min_samples_required, z_score_threshold,
                     mean_fond, std_fond
                 ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
@@ -479,7 +479,7 @@ class PostgresHandler(DatabaseHandler):
             """
             self._cursor.execute(insert_sql, (
                 session_id,
-                event.get("channel", ""),
+                event.get("channel_id", ""),
                 data.get("filtre_name", ""),
                 True,
                 data.get("samples", 0),
