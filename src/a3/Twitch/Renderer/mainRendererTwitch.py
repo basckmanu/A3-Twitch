@@ -213,12 +213,13 @@ class Renderer:
         mot_rep = données.get("mot_repetition")
 
         auteur = message.author.name if message else "inconnu"
+        streamer = self.channel or "inconnu"
         contenu_msg = message.content[:80] if message else ""
         heure = timestamp.strftime("%H:%M:%S")
 
         filtres_actifs = [f"`{nom}` ({v.get('score_pondéré', 0):.2f})" for nom, v in détails.items() if v.get("score_pondéré", 0) > 0]
 
-        contenu = f"🎬 **Clip #{clip_num}** — {heure}\nScore : **{score:.2f}** | Déclenché par : `{auteur}` : *{contenu_msg}*\nFiltres : {', '.join(filtres_actifs) or 'aucun'}\n📁 `{chemin_hq}`"
+        contenu = f"🎬 **Clip #{clip_num}** — **{streamer}** — {heure}\nScore : **{score:.2f}** | Déclenché par : `{auteur}` : *{contenu_msg}*\nFiltres : {', '.join(filtres_actifs) or 'aucun'}\n📁 `{chemin_hq}`"
         if mot_rep:
             contenu += f"\n🔤 Mot répété : `{mot_rep}`"
 

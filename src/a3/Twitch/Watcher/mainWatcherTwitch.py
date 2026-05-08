@@ -81,10 +81,10 @@ class Watcher:
             brain = next(iter(self._brains.values()), None)
         if brain is None:
             return
-        données = await self._collecter(message)
+        données = await self._collecter(message, channel_name)
         await brain.analyze(données)
 
-    async def _collecter(self, message) -> dict:
+    async def _collecter(self, message, channel_name: str | None = None) -> dict:
         résultats = []
         for filtre in self.filtres:
             résultat = filtre.analyser(message)
@@ -110,6 +110,7 @@ class Watcher:
             "timestamp": datetime.now(),
             "détails": détails,
             "mot_repetition": mot_repetition,
+            "channel": channel_name,
         }
 
     # ── Monitoring calibration ─────────────────────────────────────
