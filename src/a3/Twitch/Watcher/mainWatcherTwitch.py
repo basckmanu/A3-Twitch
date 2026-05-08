@@ -11,7 +11,7 @@ from a3.Twitch.Watcher.filtres.watcherFiltreClipActivity import FiltreClipActivi
 from a3.Twitch.Watcher.filtres.watcherFiltreEmoteDensity import FiltreEmoteDensity
 from a3.Twitch.Watcher.filtres.watcherFiltreEmotions import FiltreEmotions
 from a3.Twitch.Watcher.filtres.watcherFiltreMessageRate import FiltreMessageRate
-from a3.Twitch.Watcher.filtres.Watcherfiltrerepetition import FiltreRepetition
+from a3.Twitch.Watcher.filtres.watcherFiltreRepetition import FiltreRepetition
 from a3.Twitch.Watcher.filtres.watcherFiltreUniqueAuthors import FiltreUniqueAuthors
 
 log = logging.getLogger("A3")
