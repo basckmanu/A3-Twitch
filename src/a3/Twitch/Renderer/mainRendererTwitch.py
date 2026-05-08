@@ -129,6 +129,7 @@ class ClipView(discord.ui.View):
     @discord.ui.button(label="🗑️ Supprimer", style=discord.ButtonStyle.danger, custom_id="supprimer")
     async def supprimer(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         button.custom_id = f"supprimer_{self.clip_num}"
+        await interaction.response.defer()
         if DISCORD_ALLOWED_USERS and interaction.user.id not in DISCORD_ALLOWED_USERS:
             await interaction.response.send_message("⛔ Pas autorisé.", ephemeral=True)
             return
