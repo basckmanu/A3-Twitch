@@ -129,10 +129,16 @@ class ClipView(discord.ui.View):
     @discord.ui.button(label="🗑️ Supprimer", style=discord.ButtonStyle.danger, custom_id="supprimer")
     async def supprimer(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         button.custom_id = f"supprimer_{self.clip_num}"
-        await interaction.response.defer()
         if DISCORD_ALLOWED_USERS and interaction.user.id not in DISCORD_ALLOWED_USERS:
-            await interaction.response.send_message("⛔ Pas autorisé.", ephemeral=True)
+            try:
+                await interaction.response.send_message("⛔ Pas autorisé.", ephemeral=True)
+            except Exception:
+                pass
             return
+        try:
+            await interaction.response.send_message("🗑️ Suppression en cours...", ephemeral=True)
+        except Exception:
+            pass
         try:
             if self.decision_logger:
                 self.decision_logger.log_decision(self.clip_num, "supprimer", interaction.user.name)
@@ -140,10 +146,13 @@ class ClipView(discord.ui.View):
                 self._struct_log.log_review(self.clip_num, "supprimer", interaction.user.name, interaction.user.id)
         except Exception as exc:
             log.error(f"[Renderer] erreur log_review/log_decision → {exc}")
-        self._supprimer()
-        if interaction.message:
-            await interaction.message.delete()
-        log.info(f"[Renderer] 🗑️ Clip #{self.clip_num} supprimé par {interaction.user.name}")
+        try:
+            self._supprimer()
+            if interaction.message:
+                await interaction.message.delete()
+            log.info(f"[Renderer] 🗑️ Clip #{self.clip_num} supprimé par {interaction.user.name}")
+        except Exception as exc:
+            log.error(f"[Renderer] erreur dans _supprimer/delete → {exc}")
 
     def _deplacer(self, sub: str) -> Path | None:
         if not self.chemin_clip or not self.chemin_clip.exists():
