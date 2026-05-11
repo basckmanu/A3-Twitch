@@ -154,7 +154,13 @@ class ClipView(discord.ui.View):
         if self.chemin_clip and self.chemin_clip.exists():
             dossier = self._dest_dir("rejected")
             dest = dossier / self.chemin_clip.name
-            shutil.move(str(self.chemin_clip), dest)
+            try:
+                shutil.move(str(self.chemin_clip), dest)
+                log.info(f"[Renderer] _supprimer: déplacé vers {dest}")
+            except Exception as exc:
+                log.error(f"[Renderer] _supprimer: erreur shutil.move → {exc}")
+        else:
+            log.warning(f"[Renderer] _supprimer: fichier introuvable ou déjà traité — {self.chemin_clip}")
 
 
 # ------------------------------------------------------------------ #
