@@ -133,10 +133,13 @@ class ClipView(discord.ui.View):
         if DISCORD_ALLOWED_USERS and interaction.user.id not in DISCORD_ALLOWED_USERS:
             await interaction.response.send_message("⛔ Pas autorisé.", ephemeral=True)
             return
-        if self.decision_logger:
-            self.decision_logger.log_decision(self.clip_num, "supprimer", interaction.user.name)
-        if self._struct_log:
-            self._struct_log.log_review(self.clip_num, "supprimer", interaction.user.name, interaction.user.id)
+        try:
+            if self.decision_logger:
+                self.decision_logger.log_decision(self.clip_num, "supprimer", interaction.user.name)
+            if self._struct_log:
+                self._struct_log.log_review(self.clip_num, "supprimer", interaction.user.name, interaction.user.id)
+        except Exception as exc:
+            log.error(f"[Renderer] erreur log_review/log_decision → {exc}")
         self._supprimer()
         if interaction.message:
             await interaction.message.delete()
