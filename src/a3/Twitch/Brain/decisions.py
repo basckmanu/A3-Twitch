@@ -29,7 +29,7 @@ def _dossier_decisions(channel: str) -> Path:
 
 
 CLIP_SUBDIRS = ["output", "validated", "highlights", "rejected"]
-RETENTION_DAYS = 14
+RETENTION_DAYS = 2
 CLEANUP_INTERVAL_SEC = 3600
 
 
@@ -37,7 +37,7 @@ class DecisionLogger:
     """
     Enregistre chaque clip généré et chaque décision de review.
     Un fichier JSON par session par channel : decisions/{channel}/session_YYYY-MM-DD_HH-MM-SS.json
-    Cleanup policy : supprime automatiquement les clips > 14 jours.
+    Cleanup policy : supprime automatiquement les clips > 2 jours.
     """
 
     def __init__(self, channel: str = "unknown", retention_days: int = RETENTION_DAYS) -> None:
