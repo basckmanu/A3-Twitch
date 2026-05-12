@@ -307,6 +307,7 @@ class PostgresHandler(DatabaseHandler):
                         batch.append(event)
                     except queue.Empty:
                         break
+                log.debug(f"[PostgresHandler] 🔄 _worker_loop — queue_size={self._queue.qsize()}  batch_len={len(batch)}")
             except Exception:
                 if self._closed:
                     break
@@ -322,6 +323,7 @@ class PostgresHandler(DatabaseHandler):
             return
         try:
             self._queue.put_nowait(event)
+            log.debug(f"[PostgresHandler] 📤 write() — event_type={event.get('event_type')!r}  queue_size≈{self._queue.qsize()}")
         except queue.Full:
             log.warning("[PostgresHandler] ⚠️ Queue pleine, event droppé")
 
