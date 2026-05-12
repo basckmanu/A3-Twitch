@@ -185,23 +185,20 @@ class PostgresHandler(DatabaseHandler):
                 )
             """)
 
-            # Table filter_events (author_id = SHA-256 pseudonymized, message_excerpt retiré)
+            # Table filter_events (author_id = SHA-256 pseudonymized)
             self._cursor.execute("""
                 CREATE TABLE IF NOT EXISTS filter_events (
                     id BIGSERIAL PRIMARY KEY,
                     session_id VARCHAR(16) NOT NULL,
                     channel_id UUID NOT NULL,
                     event_type VARCHAR(64) NOT NULL,
-                    filtre_nom VARCHAR(64),
+                    filter_name VARCHAR(64),
                     score_raw DECIMAL(10,4),
-                    score_pondere DECIMAL(10,4),
+                    score_weighted DECIMAL(10,4),
                     z_score DECIMAL(8,4),
-                    mean_baseline DECIMAL(10,4),
-                    std_baseline DECIMAL(10,4),
-                    seuil DECIMAL(10,4),
+                    threshold DECIMAL(10,4),
                     author_id CHAR(16),
-                    level VARCHAR(10) DEFAULT 'INFO',
-                    data JSONB,
+                    is_triggered BOOLEAN DEFAULT FALSE,
                     timestamp TIMESTAMPTZ DEFAULT NOW()
                 )
             """)
@@ -387,18 +384,9 @@ class PostgresHandler(DatabaseHandler):
             log.info(f"[PostgresHandler] 📥 _inserer_event — event_type={event_type!r}  channel={channel_name!r}  session_id={session_id!r}")
 
             auteur_hash = pseudonymize(data.get("auteur", "")) or ""
-            values = (
-                session_id,
-                channel_id,
-                event_type,
-                auteur_hash,
-                event.get("level", "INFO"),
-                json.dumps(data, default=str),
-                event.get("timestamp", datetime.now(timezone.utc)),
-            )
             self._cursor.execute(
-                "INSERT INTO filter_events (session_id, channel_id, event_type, author_id, level, data, timestamp) VALUES (%s, %s, %s, %s, %s, %s, %s)",
-                values,
+                "INSERT INTO filter_events (session_id, channel_id, event_type, author_id, timestamp) VALUES (%s, %s, %s, %s, %s)",
+                (session_id, channel_id, event_type, auteur_hash, event.get("timestamp", datetime.now(timezone.utc))),
             )
 
             # Route vers tables spécialisées
