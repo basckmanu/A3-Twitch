@@ -95,10 +95,9 @@ class Brain:
         self.renderer = renderer
         self.debut_live = datetime.now()
         self._struct_log.log_event(EventType.SESSION_START, {
-            "channel": self.channel,
             "seuil": self.seuil,
             "poids": self.poids,
-        })
+        }, channel=self.channel, session_id=self.session_id)
         poids_str = " | ".join(f"{k}: {v}" for k, v in self.poids.items())
         log.info(f"[Brain] 🧠 Démarré — seuil: {self.seuil} | mode: Élastique (TikTok >{DUREE_MIN_TIKTOK_SEC}s) | poids: {poids_str}")
         log.info(f"[Brain] {'✅ StreamCapture actif' if capture else '⚠️  pas de capture vidéo'}")
@@ -428,13 +427,12 @@ class Brain:
     async def stop(self) -> None:
         # Logger la fin de session
         self._struct_log.log_event(EventType.SESSION_STOP, {
-            "channel": self.channel,
             "clips_detectes": self.clips_detectes,
             "clips_rejetes": self.clips_rejetes,
             "score_moyen": sum(d["score_final"] for d in self.historique) / len(self.historique) if self.historique else 0,
             "score_max": max((d["score_final"] for d in self.historique), default=0),
             "duree_session_sec": (datetime.now() - self.debut_live).total_seconds(),
-        })
+        }, channel=self.channel, session_id=self.session_id)
 
         self.afficher_bilan_final()
 

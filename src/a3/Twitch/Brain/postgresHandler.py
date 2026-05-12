@@ -371,7 +371,7 @@ class PostgresHandler(DatabaseHandler):
     def _inserer_event(self, event: dict) -> None:
         """Route chaque event vers la bonne table."""
         try:
-            channel_name = event.get("data", {}).get("channel") or event.get("channel", "")
+            channel_name = event.get("channel", "")
             channel_id = self._ensure_channel(channel_name) if channel_name else None
             event_type = event.get("event_type", "")
             data = event.get("data", {})

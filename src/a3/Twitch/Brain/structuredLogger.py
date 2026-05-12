@@ -166,7 +166,7 @@ class StructuredLogger:
 
     # ── Public API ──────────────────────────────────────────────────
 
-    def log_event(self, event_type: str, data: dict, level: str = "INFO") -> None:
+    def log_event(self, event_type: str, data: dict, level: str = "INFO", channel: str | None = None, session_id: str | None = None) -> None:
         """
         Log un event structuré.
         - Écrit dans le fichier JSONL
@@ -176,8 +176,8 @@ class StructuredLogger:
         event = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "event_type": event_type,
-            "channel": self.channel,
-            "session_id": self.session_id,
+            "channel": channel if channel is not None else self.channel,
+            "session_id": session_id if session_id is not None else self.session_id,
             "level": level,
             "data": data,
         }
