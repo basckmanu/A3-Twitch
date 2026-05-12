@@ -185,7 +185,7 @@ class PostgresHandler(DatabaseHandler):
                 )
             """)
 
-            # Table filter_events (auteur_hash = SHA-256 pseudonymized, message_excerpt retiré)
+            # Table filter_events (author_id = SHA-256 pseudonymized, message_excerpt retiré)
             self._cursor.execute("""
                 CREATE TABLE IF NOT EXISTS filter_events (
                     id BIGSERIAL PRIMARY KEY,
@@ -199,7 +199,7 @@ class PostgresHandler(DatabaseHandler):
                     mean_baseline DECIMAL(10,4),
                     std_baseline DECIMAL(10,4),
                     seuil DECIMAL(10,4),
-                    auteur_hash CHAR(16),
+                    author_id CHAR(16),
                     level VARCHAR(10) DEFAULT 'INFO',
                     data JSONB,
                     timestamp TIMESTAMPTZ DEFAULT NOW()
@@ -338,11 +338,19 @@ class PostgresHandler(DatabaseHandler):
                 channel = event.get("channel", "?")
                 session_id = event.get("session_id", "?")
                 log.info(f"[PostgresHandler]   event → event_type={event_type!r}  channel={channel!r}  session_id={session_id!r}")
-                self._inserer_event(event)
-            self._db.commit()
-            log.info(f"[PostgresHandler] ✅ _insert_batch — COMMIT {len(batch)} events OK")
+                try:
+                    self._inserer_event(event)
+                    self._db.commit()
+                except Exception:
+                    import traceback
+                    log.error(f"[PostgresHandler] ❌ event ÉCHOUÉ — event_type={event_type!r}  rolling back:\n{traceback.format_exc()}")
+                    try:
+                        self._db.rollback()
+                    except Exception:
+                        pass
+            log.info(f"[PostgresHandler] ✅ _insert_batch — {len(batch)} events traités")
         except Exception as e:
-            log.error(f"[PostgresHandler] ❌ Erreur insert batch : {e}")
+            log.error(f"[PostgresHandler] ❌ Erreur insert batch globale : {e}")
             try:
                 self._db.rollback()
             except Exception:
@@ -389,7 +397,7 @@ class PostgresHandler(DatabaseHandler):
                 event.get("timestamp", datetime.now(timezone.utc)),
             )
             self._cursor.execute(
-                "INSERT INTO filter_events (session_id, channel_id, event_type, auteur_hash, level, data, timestamp) VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                "INSERT INTO filter_events (session_id, channel_id, event_type, author_id, level, data, timestamp) VALUES (%s, %s, %s, %s, %s, %s, %s)",
                 values,
             )
 
