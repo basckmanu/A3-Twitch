@@ -390,6 +390,7 @@ class PostgresHandler(DatabaseHandler):
 
             # Route vers tables spécialisées
             if event_type == EventType.SESSION_START:
+                log.info(f"[PostgresHandler] 🔀 ROUTING SESSION_START — event_type={event_type!r} matches EventType.SESSION_START={EventType.SESSION_START!r}")
                 self._insert_session(event, data, session_id, channel_id)
             elif event_type == EventType.SESSION_STOP:
                 self._update_session_fin(event, data, session_id)
@@ -418,6 +419,7 @@ class PostgresHandler(DatabaseHandler):
 
     def _insert_session(self, event: dict, data: dict, session_id: str, channel_id: str) -> None:
         """Insère une nouvelle session."""
+        log.info(f"[PostgresHandler] 🚀 _insert_session appelé — session_id={session_id!r}  channel_id={channel_id!r}  data_keys={list(data.keys())}")
         try:
             insert_sql = """
                 INSERT INTO sessions (session_id, channel_id, debut_session, statut, seuil_clip, poids_filtres, version_app)
@@ -432,8 +434,10 @@ class PostgresHandler(DatabaseHandler):
                 json.dumps(data.get("poids", {}), default=str),
                 data.get("version_app", "1.0.0"),
             ))
+            log.info(f"[PostgresHandler] ✅ _insert_session — INSERT OK rows={self._cursor.rowcount}  session_id={session_id!r}")
         except Exception as e:
-            log.debug(f"[PostgresHandler] ⚠️ Insert session échoué: {e}")
+            import traceback
+            log.error(f"[PostgresHandler] ❌ _insert_session ÉCHEC — session_id={session_id!r}  channel_id={channel_id!r}\n{traceback.format_exc()}")
 
     def _update_session_fin(self, event: dict, data: dict, session_id: str) -> None:
         """Met à jour la fin de session."""
