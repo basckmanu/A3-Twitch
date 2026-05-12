@@ -205,41 +205,46 @@ class StructuredLogger:
 
     # ── Convenience shortcuts ────────────────────────────────────
 
-    def log_clip_detected(self, clip_num: int, score: float, détails: dict, auteur: str, repetition_word: str | None, message: str) -> None:
+    def log_clip_detected(self, clip_num: int, score: float, détails: dict, auteur: str, repetition_word: str | None, message: str, channel: str | None = None) -> None:
         self.log_event(EventType.CLIP_DETECTED, {
+            "channel": channel or self.channel,
             "clip_num": clip_num,
             "score": round(score, 4),
             "filtres": {k: round(v.get("score_pondéré", 0.0), 4) for k, v in détails.items()},
-            "auteur": auteur,  # pseudonymized
-            "repetition_word": repetition_word,  # pseudonymized
+            "auteur": auteur,
+            "repetition_word": repetition_word,
             "message_excerpt": message[:80],
         })
 
-    def log_clip_generated(self, clip_num: int, score: float, chemin: str | None, duree_sec: float) -> None:
+    def log_clip_generated(self, clip_num: int, score: float, chemin: str | None, duree_sec: float, channel: str | None = None) -> None:
         self.log_event(EventType.CLIP_GENERATED, {
+            "channel": channel or self.channel,
             "clip_num": clip_num,
             "score": round(score, 4),
             "chemin": chemin,
             "duree_sec": round(duree_sec, 1),
         })
 
-    def log_clip_merged(self, clip_num: int, score: float, merged_from: int | None = None) -> None:
+    def log_clip_merged(self, clip_num: int, score: float, merged_from: int | None = None, channel: str | None = None) -> None:
         self.log_event(EventType.CLIP_MERGED, {
+            "channel": channel or self.channel,
             "clip_num": clip_num,
             "score": round(score, 4),
             "merged_from": merged_from,
         })
 
-    def log_filter_trigger(self, filtre: str, z_score: float, score_pondere: float, auteur: str) -> None:
+    def log_filter_trigger(self, filtre: str, z_score: float, score_pondere: float, auteur: str, channel: str | None = None) -> None:
         self.log_event(EventType.FILTER_TRIGGER, {
+            "channel": channel or self.channel,
             "filtre": filtre,
             "z_score": round(z_score, 4),
             "score_pondere": round(score_pondere, 4),
             "auteur": auteur,
         })
 
-    def log_calibration_complete(self, filtre: str, samples: int, mean: float, std: float, z_score_threshold: float) -> None:
+    def log_calibration_complete(self, filtre: str, samples: int, mean: float, std: float, z_score_threshold: float, channel: str | None = None) -> None:
         self.log_event(EventType.CALIBRATION_COMPLETE, {
+            "channel": channel or self.channel,
             "filtre": filtre,
             "samples": samples,
             "mean": round(mean, 4),
@@ -247,16 +252,18 @@ class StructuredLogger:
             "z_score_threshold": round(z_score_threshold, 2),
         })
 
-    def log_filter_score(self, filtre: str, score_raw: float, score_pondere: float, auteur: str) -> None:
+    def log_filter_score(self, filtre: str, score_raw: float, score_pondere: float, auteur: str, channel: str | None = None) -> None:
         self.log_event(EventType.FILTER_SCORE, {
+            "channel": channel or self.channel,
             "filtre": filtre,
             "score_raw": round(score_raw, 4),
             "score_pondere": round(score_pondere, 4),
             "auteur": auteur,
         })
 
-    def log_error(self, component: str, erreur: str, contexte: dict | None = None) -> None:
+    def log_error(self, component: str, erreur: str, contexte: dict | None = None, channel: str | None = None) -> None:
         self.log_event(EventType.ERROR, {
+            "channel": channel or self.channel,
             "component": component,
             "erreur": erreur,
             "contexte": contexte or {},

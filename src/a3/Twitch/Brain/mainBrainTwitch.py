@@ -187,8 +187,9 @@ class Brain:
             score=score_final,
             détails=détails,
             auteur=auteur_hash,
-            repetition_word=données.get("mot_repetition"),  # hash du mot dominant
+            repetition_word=données.get("mot_repetition"),
             message=message.content[:80] if message else "",
+            channel=self.channel,
         )
 
         self._ts_debut_record = maintenant - DECALAGE_RECORD_AVANT_SEC
@@ -288,6 +289,7 @@ class Brain:
                     score=self._score_max_clip,
                     chemin=str(chemins["hq"]),
                     duree_sec=duree_calculee,
+                    channel=self.channel,
                 )
                 if liste_previews:
                     log.info(f"[Brain] 🎥 Transmission au Discord de {len(liste_previews)} aperçus découpés.")
@@ -297,6 +299,7 @@ class Brain:
                     score=self._score_max_clip,
                     chemin=None,
                     duree_sec=duree_calculee,
+                    channel=self.channel,
                 )
                 log.warning("[Brain] ⚠️  Clip vidéo échoué — buffer insuffisant ?")
 
