@@ -26,9 +26,11 @@ class EventType:
     FILTER_SCORE = "filter_score"      # score d'un filtre sur un message
     FILTER_TRIGGER = "filter_trigger"  # un filtre se déclenche
     FILTER_CALIBRATED = "filter_calibrated"
+    CALIBRATION_COMPLETE = "calibration_complete"
 
     # Clip lifecycle
     CLIP_DETECTED = "clip_detected"
+    CLIP_MERGED = "clip_merged"
     CLIP_RECORDING = "clip_recording"
     CLIP_GENERATED = "clip_generated"
     CLIP_VALIDATED = "clip_validated"

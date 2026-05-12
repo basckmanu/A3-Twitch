@@ -345,10 +345,24 @@ class PostgresHandler(DatabaseHandler):
                 self._update_session_fin(event, data, session_id)
             elif event_type == EventType.CLIP_DETECTED:
                 self._insert_clip(event, data, session_id)
+            elif event_type == EventType.CLIP_MERGED:
+                self._insert_clip_merge(event, data, session_id)
             elif event_type in (EventType.REVIEW_GARDER, EventType.REVIEW_HIGHLIGHT, EventType.REVIEW_SUPPRIMER):
                 self._insert_review(event, data, session_id, event_type)
             elif event_type == EventType.FILTER_CALIBRATED:
                 self._insert_calibration(event, data, session_id)
+
+            # Insertion non-bloquante dans stream_events pour tous les events listés
+            if event_type in (
+                EventType.SESSION_START,
+                EventType.CLIP_DETECTED,
+                EventType.CLIP_MERGED,
+                EventType.FILTER_TRIGGER,
+                EventType.FILTER_CALIBRATED,
+                EventType.CALIBRATION_COMPLETE,
+                EventType.ERROR,
+            ):
+                self._insert_stream_event(event, data, session_id)
         except Exception as e:
             log.debug(f"[PostgresHandler] ⚠️ _inserer_event échoué: {e}")
 
@@ -493,6 +507,46 @@ class PostgresHandler(DatabaseHandler):
             ))
         except Exception as e:
             log.debug(f"[PostgresHandler] ⚠️ Insert calibration échoué: {e}")
+
+    def _insert_clip_merge(self, event: dict, data: dict, session_id: str) -> None:
+        """Met à jour un clip existant lors d'un merge (ajoute les scores agrégés)."""
+        try:
+            update_sql = """
+                UPDATE clips SET
+                    score_final = GREATEST(score_final, %s)
+                WHERE clip_num = %s AND session_id = %s
+            """
+            self._cursor.execute(update_sql, (
+                data.get("score", 0),
+                data.get("clip_num"),
+                session_id,
+            ))
+        except Exception as e:
+            log.debug(f"[PostgresHandler] ⚠️ Insert clip merge échoué: {e}")
+
+    def _insert_stream_event(self, event: dict, data: dict, session_id: str) -> None:
+        """Insère un event dans stream_events (non-bloquant, async via le worker)."""
+        try:
+            insert_sql = """
+                INSERT INTO stream_events (session_id, channel_id, event_type, level, message, component, erreur, data)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            """
+            message = data.get("message", "") or str(data)
+            component = data.get("component", "") or data.get("filtre", "") or ""
+            erreur = data.get("erreur", "") or ""
+
+            self._cursor.execute(insert_sql, (
+                session_id,
+                event.get("channel_id", ""),
+                event.get("event_type", ""),
+                event.get("level", "INFO"),
+                message,
+                component,
+                erreur,
+                self._psycopg2_extras.Json(data, default=str),
+            ))
+        except Exception as e:
+            log.debug(f"[PostgresHandler] ⚠️ Insert stream_event échoué: {e}")
 
     def flush(self) -> None:
         batch: list[dict] = []
