@@ -85,6 +85,19 @@ class PostgresHandler(DatabaseHandler):
             # Créer les tables à la première connexion
             self._creer_tables()
 
+            # Test d'insertion directe pour vérifier les droits d'écriture
+            self._cursor.execute(
+                "INSERT INTO channels (name) VALUES (%s) ON CONFLICT (name) DO NOTHING",
+                ("_test_channel_a3",),
+            )
+            self._db.commit()
+            self._cursor.execute("SELECT id FROM channels WHERE name = %s", ("_test_channel_a3",))
+            row = self._cursor.fetchone()
+            if row:
+                log.info(f"[PostgresHandler] ✅ Test d'insertion channel OK — id={row[0]}")
+            else:
+                log.error("[PostgresHandler] ❌ Test d'insertion channel A ÉCHOUÉ — aucune ligne retournée")
+
         except ImportError:
             log.error("[PostgresHandler] ❌ psycopg2 non installé — pip install psycopg2-binary")
             self._db = None
@@ -301,6 +314,7 @@ class PostgresHandler(DatabaseHandler):
 
             if batch:
                 self._insert_batch(batch)
+                log.debug(f"[PostgresHandler] ✅ _worker_loop — batch de {len(batch)} events inséré avec succès")
 
     def write(self, event: dict) -> None:
         """Insère un event et le route vers la table appropriée."""
@@ -319,7 +333,7 @@ class PostgresHandler(DatabaseHandler):
             for event in batch:
                 self._inserer_event(event)
             self._db.commit()
-            log.debug(f"[PostgresHandler] 📦 {len(batch)} events insérés")
+            log.info(f"[PostgresHandler] ✅ _insert_batch — COMMIT {len(batch)} events OK")
         except Exception as e:
             log.error(f"[PostgresHandler] ❌ Erreur insert batch : {e}")
             try:
@@ -340,6 +354,7 @@ class PostgresHandler(DatabaseHandler):
             row = self._cursor.fetchone()
             if row:
                 self._channel_ids[channel_name] = str(row[0])
+                log.debug(f"[PostgresHandler] ✅ _ensure_channel('{channel_name}') → id={self._channel_ids[channel_name]}")
                 return self._channel_ids[channel_name]
         except Exception as e:
             log.debug(f"[PostgresHandler] ⚠️ _ensure_channel échoué: {e}")

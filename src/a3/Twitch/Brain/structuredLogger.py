@@ -237,6 +237,30 @@ class StructuredLogger:
             "duree_sec": round(duree_sec, 1),
         })
 
+    def log_clip_merged(self, clip_num: int, score: float, merged_from: int | None = None) -> None:
+        self.log_event(EventType.CLIP_MERGED, {
+            "clip_num": clip_num,
+            "score": round(score, 4),
+            "merged_from": merged_from,
+        })
+
+    def log_filter_trigger(self, filtre: str, z_score: float, score_pondere: float, auteur: str) -> None:
+        self.log_event(EventType.FILTER_TRIGGER, {
+            "filtre": filtre,
+            "z_score": round(z_score, 4),
+            "score_pondere": round(score_pondere, 4),
+            "auteur": auteur,
+        })
+
+    def log_calibration_complete(self, filtre: str, samples: int, mean: float, std: float, z_score_threshold: float) -> None:
+        self.log_event(EventType.CALIBRATION_COMPLETE, {
+            "filtre": filtre,
+            "samples": samples,
+            "mean": round(mean, 4),
+            "std": round(std, 4),
+            "z_score_threshold": round(z_score_threshold, 2),
+        })
+
     def _log_review_instance(self, clip_num: int, action: str, user: str) -> None:
         from a3.utils.privacy import pseudonymize
         user_hash = pseudonymize(user) or "unknown"
