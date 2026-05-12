@@ -85,19 +85,6 @@ class PostgresHandler(DatabaseHandler):
             # Créer les tables à la première connexion
             self._creer_tables()
 
-            # Test d'insertion directe pour vérifier les droits d'écriture
-            self._cursor.execute(
-                "INSERT INTO channels (name) VALUES (%s) ON CONFLICT (name) DO NOTHING",
-                ("_test_channel_a3",),
-            )
-            self._db.commit()
-            self._cursor.execute("SELECT id FROM channels WHERE name = %s", ("_test_channel_a3",))
-            row = self._cursor.fetchone()
-            if row:
-                log.info(f"[PostgresHandler] ✅ Test d'insertion channel OK — id={row[0]}")
-            else:
-                log.error("[PostgresHandler] ❌ Test d'insertion channel A ÉCHOUÉ — aucune ligne retournée")
-
         except ImportError:
             log.error("[PostgresHandler] ❌ psycopg2 non installé — pip install psycopg2-binary")
             self._db = None
