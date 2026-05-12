@@ -10,6 +10,7 @@ from a3.config import CHANNELS, TOKEN
 from a3.Twitch.Brain.decisions import DecisionLogger
 from a3.Twitch.Brain.mainBrainTwitch import Brain
 from a3.Twitch.Brain.streamCapture import StreamCapture
+from a3.Twitch.Brain.structuredLogger import StructuredLogger
 from a3.Twitch.Renderer.mainRendererTwitch import Renderer
 from a3.Twitch.Watcher.mainWatcherTwitch import Watcher
 
@@ -50,14 +51,20 @@ class TwitchBot(commands.Bot):
         self.log = logger
         self.decision_logger = DecisionLogger()
 
-        # Un StreamCapture et un Brain par channel surveillé
+        # Une seule instance de StructuredLogger partagée par tous les Brain et le Renderer
+        struct_log = StructuredLogger(channel=CHANNELS[0] if CHANNELS else "unknown")
+
+        # Un StreamCapture et un Brain par channel surveillé — tous partagent le même StructuredLogger
         self._captures: dict[str, StreamCapture] = {ch: StreamCapture(channel=ch) for ch in channels}
-        self._brains: dict[str, Brain] = {ch: Brain(logger=logger, decision_logger=self.decision_logger, channel=ch) for ch in channels}
+        self._brains: dict[str, Brain] = {
+            ch: Brain(logger=logger, decision_logger=self.decision_logger, channel=ch, structured_logger=struct_log)
+            for ch in channels
+        }
 
         self.renderer = Renderer(
             channel=channels[0] if channels else "unknown",
             decision_logger=self.decision_logger,
-            struct_log=next(iter(self._brains.values()), None)._struct_log if self._brains else None,
+            struct_log=struct_log,
         )
         self.watcher = Watcher()
 

@@ -58,6 +58,7 @@ class Brain:
         logger: logging.Logger | None = None,
         decision_logger=None,
         channel: str = "unknown",
+        structured_logger: StructuredLogger | None = None,
     ) -> None:
         self.seuil = seuil
         self.poids = poids or POIDS_FILTRES
@@ -65,8 +66,7 @@ class Brain:
         self.renderer = None
         self.decision_logger = decision_logger
         self.channel = channel
-        self._struct_log = StructuredLogger(channel=channel)
-        StructuredLogger.set_instance(self._struct_log)
+        self._struct_log = structured_logger  # instance partagée, pas de création interne
 
         self.clips_detectes: int = 0
         self.clips_rejetes: int = 0

@@ -82,31 +82,16 @@ class DummyDBHandler(DatabaseHandler):
 
 
 class StructuredLogger:
-    _instance: "StructuredLogger | None" = None
-
     """
     Logger structuré JSON.
     Usage :
         logger = StructuredLogger(channel="kamet0")
-        StructuredLogger.set_instance(logger)
         logger.log_event(EventType.CLIP_DETECTED, {"clip_num": 1, "score": 0.72})
     """
 
-    @classmethod
-    def set_instance(cls, instance: "StructuredLogger") -> None:
-        cls._instance = instance
-
-    @classmethod
-    def get_instance(cls) -> "StructuredLogger | None":
-        return cls._instance
-
-    @classmethod
-    def log_review(cls, clip_num: int, action: str, user: str, user_id: int = 0) -> None:
-        """Shortcut global pour logger une review Discord (appelable depuis ClipView).
+    def log_review(self, clip_num: int, action: str, user: str, user_id: int = 0) -> None:
+        """Log une review Discord (appelable depuis ClipView).
         NOTE: le champ `user` est pseudonymizé avant écriture en DB/JSON."""
-        inst = cls._instance
-        if inst is None:
-            return
         from a3.utils.privacy import pseudonymize
         user_hash = pseudonymize(user) or "unknown"
         event_map = {
@@ -114,7 +99,7 @@ class StructuredLogger:
             "highlight": EventType.REVIEW_HIGHLIGHT,
             "supprimer": EventType.REVIEW_SUPPRIMER,
         }
-        inst.log_event(event_map.get(action, EventType.INFO), {
+        self.log_event(event_map.get(action, EventType.INFO), {
             "clip_num": clip_num,
             "action": action,
             "user": user_hash,  # pseudonymized — never stored in clear
@@ -205,6 +190,7 @@ class StructuredLogger:
             pass
 
         # 2. DatabaseHandler
+        self._console.debug(f"[StructuredLogger] write() → type={type(self._db).__name__}  event_type={event_type}")
         self._db.write(event)
 
         # 3. Console
@@ -259,20 +245,6 @@ class StructuredLogger:
             "mean": round(mean, 4),
             "std": round(std, 4),
             "z_score_threshold": round(z_score_threshold, 2),
-        })
-
-    def _log_review_instance(self, clip_num: int, action: str, user: str) -> None:
-        from a3.utils.privacy import pseudonymize
-        user_hash = pseudonymize(user) or "unknown"
-        event_map = {
-            "garder": EventType.REVIEW_GARDER,
-            "highlight": EventType.REVIEW_HIGHLIGHT,
-            "supprimer": EventType.REVIEW_SUPPRIMER,
-        }
-        self.log_event(event_map.get(action, EventType.INFO), {
-            "clip_num": clip_num,
-            "action": action,
-            "user": user_hash,
         })
 
     def log_filter_score(self, filtre: str, score_raw: float, score_pondere: float, auteur: str) -> None:
