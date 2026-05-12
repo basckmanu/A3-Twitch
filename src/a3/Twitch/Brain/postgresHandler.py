@@ -332,7 +332,12 @@ class PostgresHandler(DatabaseHandler):
             return
 
         try:
+            log.debug(f"[PostgresHandler] 🔍 _insert_batch — batch de {len(batch)} events : {[e.get('event_type') for e in batch]}")
             for event in batch:
+                event_type = event.get("event_type", "?")
+                channel = event.get("channel", "?")
+                session_id = event.get("session_id", "?")
+                log.debug(f"[PostgresHandler]   event → event_type={event_type!r}  channel={channel!r}  session_id={session_id!r}")
                 self._inserer_event(event)
             self._db.commit()
             log.info(f"[PostgresHandler] ✅ _insert_batch — COMMIT {len(batch)} events OK")
