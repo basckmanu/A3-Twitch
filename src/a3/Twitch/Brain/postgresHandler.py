@@ -420,8 +420,9 @@ class PostgresHandler(DatabaseHandler):
                 EventType.ERROR,
             ):
                 self._insert_stream_event(event, data, session_id, channel_id)
-        except Exception as e:
-            log.debug(f"[PostgresHandler] ⚠️ _inserer_event échoué: {e}")
+        except Exception:
+            import traceback
+            log.error(f"[PostgresHandler] ❌ _inserer_event — EXCEPTION COMPLETE:\n{traceback.format_exc()}")
 
     def _insert_session(self, event: dict, data: dict, session_id: str, channel_id: str) -> None:
         """Insère une nouvelle session."""
