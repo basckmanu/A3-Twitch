@@ -54,9 +54,8 @@ class PostgresHandler(DatabaseHandler):
         self._db: Any = None
         self._cursor: Any = None
         self._tables_created = False
-        self._current_session_id: str | None = None
-        self._current_session_pk: int | None = None  # PK BIGSERIAL généré par PostgreSQL
-        self._channel_ids: dict[str, str] = {}  # cache name → UUID
+        self._session_pks: dict[str, int] = {}  # channel_name → pk BIGSERIAL
+        self._channel_ids: dict[str, str] = {}  # channel_name → UUID
 
         self._connect()
         self._start_worker()
@@ -380,29 +379,28 @@ class PostgresHandler(DatabaseHandler):
             log.info(f"[PostgresHandler] 📥 _inserer_event — event_type={event_type!r}  channel={channel_name!r}  session_id={session_id!r}")
 
             auteur_hash = pseudonymize(data.get("auteur", "")) or None
-            if self._current_session_pk is not None:
+            session_pk = self._session_pks.get(channel_name)
+            if session_pk is not None:
                 self._cursor.execute(
                     "INSERT INTO filter_events (session_id, channel_id, event_type, author_id, timestamp) VALUES (%s, %s, %s, %s, %s)",
-                    (self._current_session_pk, channel_id, event_type, auteur_hash, event.get("timestamp", datetime.now(timezone.utc))),
+                    (session_pk, channel_id, event_type, auteur_hash, event.get("timestamp", datetime.now(timezone.utc))),
                 )
             else:
-                log.debug(f"[PostgresHandler] ⏭ filter_events ignoré — _current_session_pk est None")
+                log.debug(f"[PostgresHandler] ⏭ filter_events ignoré — session_pk None pour channel={channel_name!r}")
 
             # Route vers tables spécialisées
-            log.info(f"[PostgresHandler] 🔀 compare — event_type={repr(event_type)} type={type(event_type).__name__}  vs EventType.SESSION_START={repr(EventType.SESSION_START)} type={type(EventType.SESSION_START).__name__}  equal={event_type == EventType.SESSION_START}")
             if event_type == EventType.SESSION_START:
-                log.info(f"[PostgresHandler] 🔀 ROUTING SESSION_START — event_type={event_type!r} matches EventType.SESSION_START={EventType.SESSION_START!r}")
-                self._insert_session(event, data, session_id, channel_id)
+                self._insert_session(event, data, session_id, channel_id, channel_name)
             elif event_type == EventType.SESSION_STOP:
-                self._update_session_fin(event, data, session_id)
+                self._update_session_fin(event, data, session_id, channel_name)
             elif event_type == EventType.CLIP_DETECTED:
-                self._insert_clip(event, data, session_id, channel_id)
+                self._insert_clip(event, data, session_id, channel_id, channel_name)
             elif event_type == EventType.CLIP_MERGED:
-                self._insert_clip_merge(event, data, session_id, channel_id)
+                self._insert_clip_merge(event, data, session_id, channel_id, channel_name)
             elif event_type in (EventType.REVIEW_GARDER, EventType.REVIEW_HIGHLIGHT, EventType.REVIEW_SUPPRIMER):
-                self._insert_review(event, data, session_id, event_type, channel_id)
+                self._insert_review(event, data, session_id, event_type, channel_id, channel_name)
             elif event_type == EventType.FILTER_CALIBRATED:
-                self._insert_calibration(event, data, session_id, channel_id)
+                self._insert_calibration(event, data, session_id, channel_id, channel_name)
 
             # Insertion non-bloquante dans stream_events pour tous les events listés
             if event_type in (
@@ -414,14 +412,14 @@ class PostgresHandler(DatabaseHandler):
                 EventType.CALIBRATION_COMPLETE,
                 EventType.ERROR,
             ):
-                self._insert_stream_event(event, data, session_id, channel_id)
+                self._insert_stream_event(event, data, session_id, channel_id, channel_name)
         except Exception:
             import traceback
             log.error(f"[PostgresHandler] ❌ _inserer_event — EXCEPTION COMPLETE:\n{traceback.format_exc()}")
 
-    def _insert_session(self, event: dict, data: dict, session_id: str, channel_id: str) -> None:
-        """Insère une nouvelle session et stocke la PK BIGSERIAL dans _current_session_pk."""
-        log.info(f"[PostgresHandler] 🚀 _insert_session appelé — channel_id={channel_id!r}  data_keys={list(data.keys())}")
+    def _insert_session(self, event: dict, data: dict, session_id: str, channel_id: str, channel_name: str) -> None:
+        """Insère une nouvelle session et stocke la PK BIGSERIAL dans _session_pks[channel_name]."""
+        log.info(f"[PostgresHandler] 🚀 _insert_session appelé — channel_name={channel_name!r}  channel_id={channel_id!r}")
         try:
             insert_sql = """
                 INSERT INTO sessions (channel_id, started_at, status, version)
@@ -433,22 +431,22 @@ class PostgresHandler(DatabaseHandler):
                 event.get("timestamp", datetime.now(timezone.utc)),
                 data.get("version_app", "1.0.0"),
             ))
-            log.info(f"[PostgresHandler] 🔍 _insert_session — execute done, fetching RETURNING id...")
             row = self._cursor.fetchone()
             if row:
-                self._current_session_pk = row[0]
-                self._current_session_id = session_id
-                log.info(f"[PostgresHandler] ✅ INSERT sessions OK — id={self._current_session_pk}  channel_id={channel_id!r}")
+                pk = row[0]
+                self._session_pks[channel_name] = pk
+                log.info(f"[PostgresHandler] ✅ INSERT sessions OK — id={pk}  channel_name={channel_name!r}")
             else:
-                log.error(f"[PostgresHandler] ❌ _insert_session — fetchone() None — INSERT n'a rien retourné ( RETURNING id a échoué ou session non créée)")
+                log.error(f"[PostgresHandler] ❌ _insert_session — fetchone() None pour channel_name={channel_name!r}")
         except Exception as e:
             import traceback
-            log.error(f"[PostgresHandler] ❌ _insert_session ÉCHEC — channel_id={channel_id!r}\n{traceback.format_exc()}")
+            log.error(f"[PostgresHandler] ❌ _insert_session ÉCHEC — channel_name={channel_name!r}\n{traceback.format_exc()}")
 
-    def _update_session_fin(self, event: dict, data: dict, session_id: str) -> None:
-        """Met à jour la fin de session via la PK stockée."""
-        if self._current_session_pk is None:
-            log.warning("[PostgresHandler] ⚠️ _update_session_fin — _current_session_pk est None, ignoré")
+    def _update_session_fin(self, event: dict, data: dict, session_id: str, channel_name: str) -> None:
+        """Met à jour la fin de session via la PK stockée dans _session_pks."""
+        pk = self._session_pks.get(channel_name)
+        if pk is None:
+            log.warning(f"[PostgresHandler] ⚠️ _update_session_fin — pk None pour channel_name={channel_name!r}, ignoré")
             return
         try:
             update_sql = """
@@ -471,16 +469,17 @@ class PostgresHandler(DatabaseHandler):
                 data.get("clips_rejetes", 0),
                 data.get("score_moyen", 0),
                 data.get("score_max", 0),
-                self._current_session_pk,
+                pk,
             ))
         except Exception as e:
             import traceback
             log.error(f"[PostgresHandler] ❌ _update_session_fin ÉCHEC\n{traceback.format_exc()}")
 
-    def _insert_clip(self, event: dict, data: dict, session_id: str, channel_id: str) -> None:
+    def _insert_clip(self, event: dict, data: dict, session_id: str, channel_id: str, channel_name: str) -> None:
         """Insère un clip détecté."""
-        if self._current_session_pk is None:
-            log.warning("[PostgresHandler] ⚠️ _insert_clip — _current_session_pk est None, ignoré")
+        pk = self._session_pks.get(channel_name)
+        if pk is None:
+            log.warning(f"[PostgresHandler] ⚠️ _insert_clip — pk None pour channel_name={channel_name!r}, ignoré")
             return
         try:
             insert_sql = """
@@ -495,7 +494,7 @@ class PostgresHandler(DatabaseHandler):
             filtres = data.get("filtres", {})
 
             self._cursor.execute(insert_sql, (
-                self._current_session_pk,
+                pk,
                 data.get("clip_num"),
                 channel_id if channel_id else None,
                 data.get("score", 0),
@@ -514,10 +513,11 @@ class PostgresHandler(DatabaseHandler):
             import traceback
             log.error(f"[PostgresHandler] ❌ _insert_clip ÉCHEC\n{traceback.format_exc()}")
 
-    def _insert_review(self, event: dict, data: dict, session_id: str, event_type: str, channel_id: str) -> None:
+    def _insert_review(self, event: dict, data: dict, session_id: str, event_type: str, channel_id: str, channel_name: str) -> None:
         """Insère une review Discord."""
-        if self._current_session_pk is None:
-            log.warning("[PostgresHandler] ⚠️ _insert_review — _current_session_pk est None, ignoré")
+        pk = self._session_pks.get(channel_name)
+        if pk is None:
+            log.warning(f"[PostgresHandler] ⚠️ _insert_review — pk None pour channel_name={channel_name!r}, ignoré")
             return
         try:
             action_map = {
@@ -537,9 +537,9 @@ class PostgresHandler(DatabaseHandler):
             username_hash = pseudonymize(data.get("user", "")) or "unknown"
             self._cursor.execute(insert_sql, (
                 data.get("clip_num"),
-                self._current_session_pk,
-                self._current_session_pk,
-                channel_id,
+                pk,
+                pk,
+                channel_id if channel_id else None,
                 action,
                 data.get("user_id", 0),
                 username_hash,
@@ -549,9 +549,10 @@ class PostgresHandler(DatabaseHandler):
             import traceback
             log.error(f"[PostgresHandler] ❌ _insert_review ÉCHEC\n{traceback.format_exc()}")
 
-    def _insert_calibration(self, event: dict, data: dict, session_id: str, channel_id: str) -> None:
+    def _insert_calibration(self, event: dict, data: dict, session_id: str, channel_id: str, channel_name: str) -> None:
         """Insère les stats de calibration d'un filtre."""
-        if self._current_session_pk is None:
+        pk = self._session_pks.get(channel_name)
+        if pk is None:
             return
         try:
             insert_sql = """
@@ -565,7 +566,7 @@ class PostgresHandler(DatabaseHandler):
                     std = EXCLUDED.std
             """
             self._cursor.execute(insert_sql, (
-                self._current_session_pk,
+                pk,
                 channel_id if channel_id else None,
                 data.get("filtre_name", ""),
                 True,
@@ -582,9 +583,10 @@ class PostgresHandler(DatabaseHandler):
             import traceback
             log.error(f"[PostgresHandler] ❌ _insert_calibration ÉCHEC\n{traceback.format_exc()}")
 
-    def _insert_clip_merge(self, event: dict, data: dict, session_id: str, channel_id: str) -> None:
+    def _insert_clip_merge(self, event: dict, data: dict, session_id: str, channel_id: str, channel_name: str) -> None:
         """Met à jour un clip existant lors d'un merge (agrège les scores)."""
-        if self._current_session_pk is None:
+        pk = self._session_pks.get(channel_name)
+        if pk is None:
             return
         try:
             update_sql = """
@@ -595,14 +597,18 @@ class PostgresHandler(DatabaseHandler):
             self._cursor.execute(update_sql, (
                 data.get("score", 0),
                 data.get("clip_num"),
-                self._current_session_pk,
+                pk,
             ))
         except Exception as e:
             import traceback
             log.error(f"[PostgresHandler] ❌ _insert_clip_merge ÉCHEC\n{traceback.format_exc()}")
 
-    def _insert_stream_event(self, event: dict, data: dict, session_id: str, channel_id: str) -> None:
+    def _insert_stream_event(self, event: dict, data: dict, session_id: str, channel_id: str, channel_name: str) -> None:
         """Insère un event dans stream_events (non-bloquant, async via le worker)."""
+        pk = self._session_pks.get(channel_name)
+        if pk is None:
+            log.debug(f"[PostgresHandler] ⏭ stream_event ignoré — pk None pour channel_name={channel_name!r}")
+            return
         try:
             insert_sql = """
                 INSERT INTO stream_events (session_id, channel_id, event_type, level, message, component, erreur, data)
@@ -613,7 +619,7 @@ class PostgresHandler(DatabaseHandler):
             erreur = data.get("erreur", "") or ""
 
             self._cursor.execute(insert_sql, (
-                self._current_session_pk,
+                pk,
                 channel_id if channel_id else None,
                 event.get("event_type", ""),
                 event.get("level", "INFO"),
