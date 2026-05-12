@@ -55,6 +55,7 @@ class PostgresHandler(DatabaseHandler):
         self._cursor: Any = None
         self._tables_created = False
         self._current_session_id: str | None = None
+        self._current_session_pk: int | None = None  # PK BIGSERIAL généré par PostgreSQL
         self._channel_ids: dict[str, str] = {}  # cache name → UUID
 
         self._connect()
@@ -117,25 +118,18 @@ class PostgresHandler(DatabaseHandler):
             self._cursor.execute("""
                 CREATE TABLE IF NOT EXISTS sessions (
                     id BIGSERIAL PRIMARY KEY,
-                    session_id VARCHAR(16) UNIQUE NOT NULL,
                     channel_id UUID NOT NULL,
-                    debut_session TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                    fin_session TIMESTAMPTZ,
-                    statut VARCHAR(20) DEFAULT 'active',
-
-                    clips_detectes INT DEFAULT 0,
-                    clips_rejetes INT DEFAULT 0,
-                    clips_gardes INT DEFAULT 0,
-                    clips_highlightes INT DEFAULT 0,
-                    clips_supprimes INT DEFAULT 0,
-
-                    score_moyen DECIMAL(5,4),
-                    score_max DECIMAL(5,4),
-                    score_min DECIMAL(5,4),
-                    seuil_clip DECIMAL(4,3),
-                    poids_filtres JSONB,
-                    version_app VARCHAR(20),
-                    created_at TIMESTAMPTZ DEFAULT NOW()
+                    started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    ended_at TIMESTAMPTZ,
+                    duration_seconds INT,
+                    clips_detected INT DEFAULT 0,
+                    clips_validated INT DEFAULT 0,
+                    clips_rejected INT DEFAULT 0,
+                    clips_highlighted INT DEFAULT 0,
+                    score_avg FLOAT,
+                    score_max FLOAT,
+                    status VARCHAR(20) DEFAULT 'active',
+                    version VARCHAR(20)
                 )
             """)
 
@@ -143,8 +137,8 @@ class PostgresHandler(DatabaseHandler):
             self._cursor.execute("""
                 CREATE TABLE IF NOT EXISTS clips (
                     id BIGSERIAL PRIMARY KEY,
+                    session_db_id BIGINT REFERENCES sessions(id),
                     clip_num INT NOT NULL,
-                    session_id VARCHAR(16) NOT NULL REFERENCES sessions(session_id),
                     channel_id UUID NOT NULL,
                     chemin_fichier VARCHAR(512),
 
@@ -156,7 +150,7 @@ class PostgresHandler(DatabaseHandler):
                     score_repetition DECIMAL(5,4),
                     score_clip_activity DECIMAL(5,4),
 
-                    auteur_hash     CHAR(16),
+                    auteur_hash CHAR(16),
                     repetition_word CHAR(16),
                     filtres_actifs TEXT[],
 
@@ -176,7 +170,7 @@ class PostgresHandler(DatabaseHandler):
                 CREATE TABLE IF NOT EXISTS reviews (
                     id BIGSERIAL PRIMARY KEY,
                     clip_id BIGINT REFERENCES clips(id) ON DELETE CASCADE,
-                    session_id VARCHAR(16) NOT NULL,
+                    session_db_id BIGINT REFERENCES sessions(id),
                     channel_id UUID NOT NULL,
                     action VARCHAR(20) NOT NULL,
                     user_id BIGINT NOT NULL,
@@ -189,7 +183,7 @@ class PostgresHandler(DatabaseHandler):
             self._cursor.execute("""
                 CREATE TABLE IF NOT EXISTS filter_events (
                     id BIGSERIAL PRIMARY KEY,
-                    session_id VARCHAR(16) NOT NULL,
+                    session_db_id BIGINT REFERENCES sessions(id),
                     channel_id UUID NOT NULL,
                     event_type VARCHAR(64) NOT NULL,
                     filter_name VARCHAR(64),
@@ -207,7 +201,7 @@ class PostgresHandler(DatabaseHandler):
             self._cursor.execute("""
                 CREATE TABLE IF NOT EXISTS calibration (
                     id BIGSERIAL PRIMARY KEY,
-                    session_id VARCHAR(16) NOT NULL,
+                    session_db_id BIGINT REFERENCES sessions(id),
                     channel_id UUID NOT NULL,
                     filtre_nom VARCHAR(64) NOT NULL,
                     est_calibre BOOLEAN DEFAULT FALSE,
@@ -227,7 +221,7 @@ class PostgresHandler(DatabaseHandler):
             self._cursor.execute("""
                 CREATE TABLE IF NOT EXISTS stream_events (
                     id BIGSERIAL PRIMARY KEY,
-                    session_id VARCHAR(16),
+                    session_db_id BIGINT REFERENCES sessions(id),
                     channel_id UUID,
                     event_type VARCHAR(64) NOT NULL,
                     level VARCHAR(10) DEFAULT 'INFO',
@@ -253,7 +247,7 @@ class PostgresHandler(DatabaseHandler):
             self._cursor.execute("""
                 CREATE TABLE IF NOT EXISTS snapshots (
                     id BIGSERIAL PRIMARY KEY,
-                    session_id VARCHAR(16) NOT NULL,
+                    session_db_id BIGINT REFERENCES sessions(id),
                     channel_id UUID NOT NULL,
                     timestamp_snapshot TIMESTAMPTZ NOT NULL,
                     messages_count INT DEFAULT 0,
@@ -270,12 +264,14 @@ class PostgresHandler(DatabaseHandler):
 
             # Index
             self._cursor.execute("CREATE INDEX IF NOT EXISTS idx_sessions_channel_id ON sessions(channel_id)")
-            self._cursor.execute("CREATE INDEX IF NOT EXISTS idx_clips_session ON clips(session_id)")
+            self._cursor.execute("CREATE INDEX IF NOT EXISTS idx_clips_session ON clips(session_db_id)")
             self._cursor.execute("CREATE INDEX IF NOT EXISTS idx_clips_channel_id ON clips(channel_id)")
             self._cursor.execute("CREATE INDEX IF NOT EXISTS idx_reviews_clip ON reviews(clip_id)")
-            self._cursor.execute("CREATE INDEX IF NOT EXISTS idx_filter_events_session ON filter_events(session_id)")
-            self._cursor.execute("CREATE INDEX IF NOT EXISTS idx_stream_events_session ON stream_events(session_id)")
+            self._cursor.execute("CREATE INDEX IF NOT EXISTS idx_reviews_session ON reviews(session_db_id)")
+            self._cursor.execute("CREATE INDEX IF NOT EXISTS idx_filter_events_session ON filter_events(session_db_id)")
+            self._cursor.execute("CREATE INDEX IF NOT EXISTS idx_stream_events_session ON stream_events(session_db_id)")
             self._cursor.execute("CREATE INDEX IF NOT EXISTS idx_stream_events_channel ON stream_events(channel_id)")
+            self._cursor.execute("CREATE INDEX IF NOT EXISTS idx_calibration_session ON calibration(session_db_id)")
 
             self._db.commit()
             self._tables_created = True
@@ -385,8 +381,8 @@ class PostgresHandler(DatabaseHandler):
 
             auteur_hash = pseudonymize(data.get("auteur", "")) or ""
             self._cursor.execute(
-                "INSERT INTO filter_events (session_id, channel_id, event_type, author_id, timestamp) VALUES (%s, %s, %s, %s, %s)",
-                (session_id, channel_id, event_type, auteur_hash, event.get("timestamp", datetime.now(timezone.utc))),
+                "INSERT INTO filter_events (session_db_id, channel_id, event_type, author_id, timestamp) VALUES (%s, %s, %s, %s, %s)",
+                (self._current_session_pk, channel_id, event_type, auteur_hash, event.get("timestamp", datetime.now(timezone.utc))),
             )
 
             # Route vers tables spécialisées
@@ -421,57 +417,71 @@ class PostgresHandler(DatabaseHandler):
             log.error(f"[PostgresHandler] ❌ _inserer_event — EXCEPTION COMPLETE:\n{traceback.format_exc()}")
 
     def _insert_session(self, event: dict, data: dict, session_id: str, channel_id: str) -> None:
-        """Insère une nouvelle session."""
-        log.info(f"[PostgresHandler] 🚀 _insert_session appelé — session_id={session_id!r}  channel_id={channel_id!r}  data_keys={list(data.keys())}")
+        """Insère une nouvelle session et stocke la PK BIGSERIAL dans _current_session_pk."""
+        log.info(f"[PostgresHandler] 🚀 _insert_session appelé — channel_id={channel_id!r}  data_keys={list(data.keys())}")
         try:
             insert_sql = """
-                INSERT INTO sessions (session_id, channel_id, debut_session, statut, seuil_clip, poids_filtres, version_app)
-                VALUES (%s, %s, %s, 'active', %s, %s, %s)
-                ON CONFLICT (session_id) DO NOTHING
+                INSERT INTO sessions (channel_id, started_at, status, version)
+                VALUES (%s, %s, 'active', %s)
+                RETURNING id
             """
             self._cursor.execute(insert_sql, (
-                session_id,
                 channel_id,
                 event.get("timestamp", datetime.now(timezone.utc)),
-                data.get("seuil"),
-                json.dumps(data.get("poids", {}), default=str),
                 data.get("version_app", "1.0.0"),
             ))
-            log.info(f"[PostgresHandler] ✅ _insert_session — INSERT OK rows={self._cursor.rowcount}  session_id={session_id!r}")
+            row = self._cursor.fetchone()
+            if row:
+                self._current_session_pk = row[0]
+                self._current_session_id = session_id
+                log.info(f"[PostgresHandler] ✅ _insert_session — pk={self._current_session_pk}  channel_id={channel_id!r}")
+            else:
+                log.warning(f"[PostgresHandler] ⚠️ _insert_session — fetchone() None après INSERT (RETURNING?)")
         except Exception as e:
             import traceback
-            log.error(f"[PostgresHandler] ❌ _insert_session ÉCHEC — session_id={session_id!r}  channel_id={channel_id!r}\n{traceback.format_exc()}")
+            log.error(f"[PostgresHandler] ❌ _insert_session ÉCHEC — channel_id={channel_id!r}\n{traceback.format_exc()}")
 
     def _update_session_fin(self, event: dict, data: dict, session_id: str) -> None:
-        """Met à jour la fin de session."""
+        """Met à jour la fin de session via la PK stockée."""
+        if self._current_session_pk is None:
+            log.warning("[PostgresHandler] ⚠️ _update_session_fin — _current_session_pk est None, ignoré")
+            return
         try:
             update_sql = """
                 UPDATE sessions SET
-                    fin_session = %s,
-                    statut = 'stopped',
-                    clips_detectes = %s,
-                    clips_rejetes = %s,
-                    score_moyen = %s,
-                    score_max = %s
-                WHERE session_id = %s
+                    ended_at = %s,
+                    duration_seconds = %s,
+                    clips_detected = %s,
+                    clips_validated = %s,
+                    clips_rejected = %s,
+                    score_avg = %s,
+                    score_max = %s,
+                    status = 'ended'
+                WHERE id = %s
             """
             self._cursor.execute(update_sql, (
                 event.get("timestamp", datetime.now(timezone.utc)),
+                data.get("duree_session_sec", 0),
                 data.get("clips_detectes", 0),
+                data.get("clips_gardes", 0),
                 data.get("clips_rejetes", 0),
                 data.get("score_moyen", 0),
                 data.get("score_max", 0),
-                session_id,
+                self._current_session_pk,
             ))
         except Exception as e:
-            log.debug(f"[PostgresHandler] ⚠️ Update session fin échoué: {e}")
+            import traceback
+            log.error(f"[PostgresHandler] ❌ _update_session_fin ÉCHEC\n{traceback.format_exc()}")
 
     def _insert_clip(self, event: dict, data: dict, session_id: str, channel_id: str) -> None:
         """Insère un clip détecté."""
+        if self._current_session_pk is None:
+            log.warning("[PostgresHandler] ⚠️ _insert_clip — _current_session_pk est None, ignoré")
+            return
         try:
             insert_sql = """
                 INSERT INTO clips (
-                    clip_num, session_id, channel_id, score_final,
+                    session_db_id, clip_num, channel_id, score_final,
                     auteur_hash, repetition_word, filtres_actifs,
                     timestamp_trigger, score_unique_authors, score_message_rate,
                     score_emotions, score_emote_density, score_repetition, score_clip_activity
@@ -481,13 +491,11 @@ class PostgresHandler(DatabaseHandler):
             filtres = data.get("filtres", {})
 
             self._cursor.execute(insert_sql, (
+                self._current_session_pk,
                 data.get("clip_num"),
-                session_id,
                 channel_id,
                 data.get("score", 0),
-                # auteur_hash CHAR(16), pseudonymized par Brain
                 data.get("auteur"),
-                # CHAR(16), hash du mot dominant
                 data.get("repetition_word"),
                 list(filtres.keys()) if filtres else [],
                 event.get("timestamp", datetime.now(timezone.utc)),
@@ -499,10 +507,14 @@ class PostgresHandler(DatabaseHandler):
                 filtres.get("FiltreClipActivity", {}).get("score_pondere", 0) if isinstance(filtres.get("FiltreClipActivity"), dict) else 0,
             ))
         except Exception as e:
-            log.debug(f"[PostgresHandler] ⚠️ Insert clip échoué: {e}")
+            import traceback
+            log.error(f"[PostgresHandler] ❌ _insert_clip ÉCHEC\n{traceback.format_exc()}")
 
     def _insert_review(self, event: dict, data: dict, session_id: str, event_type: str, channel_id: str) -> None:
         """Insère une review Discord."""
+        if self._current_session_pk is None:
+            log.warning("[PostgresHandler] ⚠️ _insert_review — _current_session_pk est None, ignoré")
+            return
         try:
             action_map = {
                 EventType.REVIEW_GARDER: "garder",
@@ -512,17 +524,17 @@ class PostgresHandler(DatabaseHandler):
             action = action_map.get(event_type, "")
 
             insert_sql = """
-                INSERT INTO reviews (clip_id, session_id, channel_id, action, user_id, username_hash, timestamp_review)
+                INSERT INTO reviews (clip_id, session_db_id, channel_id, action, user_id, username_hash, timestamp_review)
                 VALUES (
-                    (SELECT id FROM clips WHERE clip_num = %s AND session_id = %s ORDER BY timestamp_creation DESC LIMIT 1),
+                    (SELECT id FROM clips WHERE clip_num = %s AND session_db_id = %s ORDER BY timestamp_creation DESC LIMIT 1),
                     %s, %s, %s, %s, %s, %s
                 )
             """
             username_hash = pseudonymize(data.get("user", "")) or "unknown"
             self._cursor.execute(insert_sql, (
                 data.get("clip_num"),
-                session_id,
-                session_id,
+                self._current_session_pk,
+                self._current_session_pk,
                 channel_id,
                 action,
                 data.get("user_id", 0),
@@ -530,18 +542,18 @@ class PostgresHandler(DatabaseHandler):
                 event.get("timestamp", datetime.now(timezone.utc)),
             ))
         except Exception as e:
-            log.debug(f"[PostgresHandler] ⚠️ Insert review échoué: {e}")
+            import traceback
+            log.error(f"[PostgresHandler] ❌ _insert_review ÉCHEC\n{traceback.format_exc()}")
 
     def _insert_calibration(self, event: dict, data: dict, session_id: str, channel_id: str) -> None:
         """Insère les stats de calibration d'un filtre."""
+        if self._current_session_pk is None:
+            return
         try:
             insert_sql = """
-                INSERT INTO calibration (
-                    session_id, channel_id, filtre_nom, est_calibre, samples_count,
-                    timestamp_calibration, mean, std, min_samples_required, z_score_threshold,
-                    mean_fond, std_fond
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (session_id, filtre_nom) DO UPDATE SET
+                INSERT INTO calibration (session_db_id, channel_id, filtre_nom, est_calibre, samples_count, timestamp_calibration, mean, std, min_samples_required, z_score_threshold, mean_fond, std_fond)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (session_db_id, filtre_nom) DO UPDATE SET
                     est_calibre = EXCLUDED.est_calibre,
                     samples_count = EXCLUDED.samples_count,
                     timestamp_calibration = EXCLUDED.timestamp_calibration,
@@ -549,7 +561,7 @@ class PostgresHandler(DatabaseHandler):
                     std = EXCLUDED.std
             """
             self._cursor.execute(insert_sql, (
-                session_id,
+                self._current_session_pk,
                 channel_id,
                 data.get("filtre_name", ""),
                 True,
@@ -563,29 +575,33 @@ class PostgresHandler(DatabaseHandler):
                 data.get("std_fond", 0),
             ))
         except Exception as e:
-            log.debug(f"[PostgresHandler] ⚠️ Insert calibration échoué: {e}")
+            import traceback
+            log.error(f"[PostgresHandler] ❌ _insert_calibration ÉCHEC\n{traceback.format_exc()}")
 
     def _insert_clip_merge(self, event: dict, data: dict, session_id: str, channel_id: str) -> None:
-        """Met à jour un clip existant lors d'un merge (ajoute les scores agrégés)."""
+        """Met à jour un clip existant lors d'un merge (agrège les scores)."""
+        if self._current_session_pk is None:
+            return
         try:
             update_sql = """
                 UPDATE clips SET
                     score_final = GREATEST(score_final, %s)
-                WHERE clip_num = %s AND session_id = %s
+                WHERE clip_num = %s AND session_db_id = %s
             """
             self._cursor.execute(update_sql, (
                 data.get("score", 0),
                 data.get("clip_num"),
-                session_id,
+                self._current_session_pk,
             ))
         except Exception as e:
-            log.debug(f"[PostgresHandler] ⚠️ Insert clip merge échoué: {e}")
+            import traceback
+            log.error(f"[PostgresHandler] ❌ _insert_clip_merge ÉCHEC\n{traceback.format_exc()}")
 
     def _insert_stream_event(self, event: dict, data: dict, session_id: str, channel_id: str) -> None:
         """Insère un event dans stream_events (non-bloquant, async via le worker)."""
         try:
             insert_sql = """
-                INSERT INTO stream_events (session_id, channel_id, event_type, level, message, component, erreur, data)
+                INSERT INTO stream_events (session_db_id, channel_id, event_type, level, message, component, erreur, data)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             """
             message = data.get("message", "") or str(data)
@@ -593,7 +609,7 @@ class PostgresHandler(DatabaseHandler):
             erreur = data.get("erreur", "") or ""
 
             self._cursor.execute(insert_sql, (
-                session_id,
+                self._current_session_pk,
                 channel_id,
                 event.get("event_type", ""),
                 event.get("level", "INFO"),
