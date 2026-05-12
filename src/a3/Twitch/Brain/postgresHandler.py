@@ -369,6 +369,8 @@ class PostgresHandler(DatabaseHandler):
             data = event.get("data", {})
             session_id = event.get("session_id", "") or self._current_session_id or ""
 
+            log.debug(f"[PostgresHandler] 📥 _inserer_event — event_type={event_type!r}  channel={channel_name!r}  session_id={session_id!r}")
+
             auteur_hash = pseudonymize(data.get("auteur", "")) or ""
             values = (
                 session_id,
