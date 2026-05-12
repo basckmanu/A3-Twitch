@@ -3,7 +3,7 @@
 # Cerveau du système : agrège les scores des filtres et prend les décisions de clip.
 # Gère le déclenchement de l'enregistrement, le découpage et l'envoi au Discord.
 
-import asyncio
+import uuid
 import hashlib
 import logging
 import os
@@ -66,6 +66,7 @@ class Brain:
         self.renderer = None
         self.decision_logger = decision_logger
         self.channel = channel
+        self.session_id = uuid.uuid4().hex[:8]
         self._struct_log = structured_logger  # instance partagée, pas de création interne
 
         self.clips_detectes: int = 0
