@@ -394,6 +394,7 @@ class PostgresHandler(DatabaseHandler):
             )
 
             # Route vers tables spécialisées
+            log.info(f"[PostgresHandler] 🔀 compare — event_type={repr(event_type)} type={type(event_type).__name__}  vs EventType.SESSION_START={repr(EventType.SESSION_START)} type={type(EventType.SESSION_START).__name__}  equal={event_type == EventType.SESSION_START}")
             if event_type == EventType.SESSION_START:
                 log.info(f"[PostgresHandler] 🔀 ROUTING SESSION_START — event_type={event_type!r} matches EventType.SESSION_START={EventType.SESSION_START!r}")
                 self._insert_session(event, data, session_id, channel_id)
