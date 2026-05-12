@@ -372,14 +372,14 @@ class PostgresHandler(DatabaseHandler):
         """Route chaque event vers la bonne table."""
         try:
             channel_name = event.get("channel", "")
-            channel_id = self._ensure_channel(channel_name) if channel_name else ""
+            channel_id = self._ensure_channel(channel_name) if channel_name else None
             event_type = event.get("event_type", "")
             data = event.get("data", {})
             session_id = event.get("session_id", "") or self._current_session_id or ""
 
             log.info(f"[PostgresHandler] 📥 _inserer_event — event_type={event_type!r}  channel={channel_name!r}  session_id={session_id!r}")
 
-            auteur_hash = pseudonymize(data.get("auteur", "")) or ""
+            auteur_hash = pseudonymize(data.get("auteur", "")) or None
             self._cursor.execute(
                 "INSERT INTO filter_events (session_id, channel_id, event_type, author_id, timestamp) VALUES (%s, %s, %s, %s, %s)",
                 (self._current_session_pk, channel_id, event_type, auteur_hash, event.get("timestamp", datetime.now(timezone.utc))),
@@ -426,7 +426,7 @@ class PostgresHandler(DatabaseHandler):
                 RETURNING id
             """
             self._cursor.execute(insert_sql, (
-                channel_id,
+                channel_id if channel_id else None,
                 event.get("timestamp", datetime.now(timezone.utc)),
                 data.get("version_app", "1.0.0"),
             ))
@@ -493,10 +493,10 @@ class PostgresHandler(DatabaseHandler):
             self._cursor.execute(insert_sql, (
                 self._current_session_pk,
                 data.get("clip_num"),
-                channel_id,
+                channel_id if channel_id else None,
                 data.get("score", 0),
-                data.get("auteur"),
-                data.get("repetition_word"),
+                data.get("auteur") or None,
+                data.get("repetition_word") or None,
                 list(filtres.keys()) if filtres else [],
                 event.get("timestamp", datetime.now(timezone.utc)),
                 filtres.get("FiltreUniqueAuthors", {}).get("score_pondere", 0) if isinstance(filtres.get("FiltreUniqueAuthors"), dict) else 0,
@@ -562,7 +562,7 @@ class PostgresHandler(DatabaseHandler):
             """
             self._cursor.execute(insert_sql, (
                 self._current_session_pk,
-                channel_id,
+                channel_id if channel_id else None,
                 data.get("filtre_name", ""),
                 True,
                 data.get("samples", 0),
@@ -610,7 +610,7 @@ class PostgresHandler(DatabaseHandler):
 
             self._cursor.execute(insert_sql, (
                 self._current_session_pk,
-                channel_id,
+                channel_id if channel_id else None,
                 event.get("event_type", ""),
                 event.get("level", "INFO"),
                 message,
