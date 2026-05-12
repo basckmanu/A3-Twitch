@@ -380,10 +380,13 @@ class PostgresHandler(DatabaseHandler):
             log.info(f"[PostgresHandler] 📥 _inserer_event — event_type={event_type!r}  channel={channel_name!r}  session_id={session_id!r}")
 
             auteur_hash = pseudonymize(data.get("auteur", "")) or None
-            self._cursor.execute(
-                "INSERT INTO filter_events (session_id, channel_id, event_type, author_id, timestamp) VALUES (%s, %s, %s, %s, %s)",
-                (self._current_session_pk, channel_id, event_type, auteur_hash, event.get("timestamp", datetime.now(timezone.utc))),
-            )
+            if self._current_session_pk is not None:
+                self._cursor.execute(
+                    "INSERT INTO filter_events (session_id, channel_id, event_type, author_id, timestamp) VALUES (%s, %s, %s, %s, %s)",
+                    (self._current_session_pk, channel_id, event_type, auteur_hash, event.get("timestamp", datetime.now(timezone.utc))),
+                )
+            else:
+                log.debug(f"[PostgresHandler] ⏭ filter_events ignoré — _current_session_pk est None")
 
             # Route vers tables spécialisées
             log.info(f"[PostgresHandler] 🔀 compare — event_type={repr(event_type)} type={type(event_type).__name__}  vs EventType.SESSION_START={repr(EventType.SESSION_START)} type={type(EventType.SESSION_START).__name__}  equal={event_type == EventType.SESSION_START}")
@@ -430,13 +433,14 @@ class PostgresHandler(DatabaseHandler):
                 event.get("timestamp", datetime.now(timezone.utc)),
                 data.get("version_app", "1.0.0"),
             ))
+            log.info(f"[PostgresHandler] 🔍 _insert_session — execute done, fetching RETURNING id...")
             row = self._cursor.fetchone()
             if row:
                 self._current_session_pk = row[0]
                 self._current_session_id = session_id
-                log.info(f"[PostgresHandler] ✅ _insert_session — pk={self._current_session_pk}  channel_id={channel_id!r}")
+                log.info(f"[PostgresHandler] ✅ INSERT sessions OK — id={self._current_session_pk}  channel_id={channel_id!r}")
             else:
-                log.warning(f"[PostgresHandler] ⚠️ _insert_session — fetchone() None après INSERT (RETURNING?)")
+                log.error(f"[PostgresHandler] ❌ _insert_session — fetchone() None — INSERT n'a rien retourné ( RETURNING id a échoué ou session non créée)")
         except Exception as e:
             import traceback
             log.error(f"[PostgresHandler] ❌ _insert_session ÉCHEC — channel_id={channel_id!r}\n{traceback.format_exc()}")
