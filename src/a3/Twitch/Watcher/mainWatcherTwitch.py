@@ -123,6 +123,7 @@ class Watcher:
                 résultat = await résultat
             résultats.append(résultat)
 
+        auteur = message.author.name if message and message.author else ""
         détails = {}
         for filtre, résultat in zip(filtres, résultats):
             score = float(résultat) if isinstance(résultat, (int, float)) else (1.0 if résultat else 0.0)
@@ -130,6 +131,14 @@ class Watcher:
                 "score_pondéré": score,
                 "passé": score > 0.0,
             }
+            if score > 0.0 and self._struct_log is not None:
+                self._struct_log.log_filter_score(
+                    filtre=filtre.__class__.__name__,
+                    score_raw=score,
+                    score_pondere=score,
+                    auteur=auteur,
+                    channel=channel_name,
+                )
 
         mot_repetition_hash = None
         for filtre in filtres:

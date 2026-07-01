@@ -671,13 +671,15 @@ class PostgresHandler(DatabaseHandler):
                 and data.get("filtre")
                 and event_type in (EventType.FILTER_TRIGGER, EventType.FILTER_SCORE)
             ):
+                score_pondere = data.get("score_pondere", 0.0) or 0.0
                 self._exec_safe(
                     """INSERT INTO filter_events
-                    (session_id, channel_id, filter_name, event_type, score_weighted, z_score, author_id, is_triggered, timestamp)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                    (session_id, channel_id, filter_name, event_type, score_raw, score_weighted, z_score, author_id, is_triggered, timestamp)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
                     (
                         session_pk, channel_id, data.get("filtre"), event_type,
-                        data.get("score_pondere"), data.get("z_score"), auteur_hash,
+                        data.get("score_raw", score_pondere), score_pondere,
+                        data.get("z_score"), auteur_hash,
                         data.get("is_triggered", False),
                         event.get("timestamp", datetime.now(timezone.utc)),
                     ),
