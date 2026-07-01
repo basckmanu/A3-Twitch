@@ -9,6 +9,9 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+# Privacy / RGPD — doit être chargé AVANT le check _REQUIRED
+A3_HASH_SALT = os.getenv("A3_HASH_SALT", "")
+
 TOKEN = os.getenv("TOKEN_TWITCH")
 CLIENT_ID = os.getenv("CLIENT_ID")
 CLIENT_SECRET = os.getenv("CLIENT_SECRET")
@@ -33,9 +36,7 @@ if _missing:
 
 # CHANNELS : liste de noms textuels → pour TwitchIO
 CHANNELS = [c.strip() for c in os.getenv("CHANNELS", "").split(",") if c.strip()]
+if not CHANNELS:
+    raise EnvironmentError("Missing required env var: CHANNELS (comma-separated Twitch channel names)")
 
-# CHANNEL_ID : liste d'IDs numériques → pour BTTV/FFZ/7TV
 CHANNEL_ID = [c.strip() for c in os.getenv("CHANNEL_ID", "").split(",") if c.strip()]
-
-# Privacy / RGPD
-A3_HASH_SALT = os.getenv("A3_HASH_SALT", "")

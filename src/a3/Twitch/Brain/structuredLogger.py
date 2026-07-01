@@ -89,9 +89,8 @@ class StructuredLogger:
         logger.log_event(EventType.CLIP_DETECTED, {"clip_num": 1, "score": 0.72})
     """
 
-    def log_review(self, clip_num: int, action: str, user: str, user_id: int = 0) -> None:
-        """Log une review Discord (appelable depuis ClipView).
-        NOTE: le champ `user` est pseudonymizé avant écriture en DB/JSON."""
+    def log_review(self, clip_num: int, action: str, user: str, user_id: int = 0, reaction_time_sec: float | None = None) -> None:
+        """Log une review Discord. user_id brut jamais stocké en DB (RGPD)."""
         from a3.utils.privacy import pseudonymize
         user_hash = pseudonymize(user) or "unknown"
         event_map = {
@@ -102,8 +101,9 @@ class StructuredLogger:
         self.log_event(event_map.get(action, EventType.INFO), {
             "clip_num": clip_num,
             "action": action,
-            "user": user_hash,  # pseudonymized — never stored in clear
-            "user_id": user_id,
+            "user": user_hash,
+            "user_id": 0,  # jamais d'ID Discord brut en base
+            "reaction_time_sec": reaction_time_sec,
         })
 
     def __init__(
@@ -114,7 +114,7 @@ class StructuredLogger:
         db_handler: DatabaseHandler | None = None,
     ) -> None:
         self.channel = channel
-        self.session_id = session_id or str(uuid.uuid4())[:8]
+        self.session_id = session_id or uuid.uuid4().hex[:16]
 
         # Logging standard pour la console (humain lisible) — doit être avant _auto_db_handler
         self._console = logging.getLogger(f"A3.{channel}.structured")
@@ -136,31 +136,34 @@ class StructuredLogger:
         self._file = open(self._file_path, "a", encoding="utf-8")
 
     def _auto_db_handler(self) -> DatabaseHandler:
-        """Auto-detects DB: PostgreSQL (DB_TYPE=postgres) > MySQL > Dummy."""
+        """Auto-detects DB via DB_TYPE: 'postgres' | 'mysql' | absent → Dummy."""
+        from typing import Any
         db_type = os.getenv("DB_TYPE", "").lower()
-        db_password = os.getenv("DB_PASSWORD", "")
 
-        # PostgreSQL
-        if db_type == "postgres" or (not db_type and db_password):
+        if db_type == "postgres":
             try:
                 from a3.Twitch.Brain.postgresHandler import PostgresHandler
-                handler = PostgresHandler()
+                handler: Any = PostgresHandler()
                 if handler._db is not None:
                     self._console.info("[StructuredLogger] 📦 PostgreSQL handler activé")
                     return handler
+                self._console.warning("[StructuredLogger] ⚠️ PostgreSQL configuré mais connexion échouée")
             except Exception as e:
                 self._console.warning(f"[StructuredLogger] ⚠️ PostgreSQL non disponible : {e}")
 
-        # MySQL
-        if db_password:
+        elif db_type == "mysql":
             try:
                 from a3.Twitch.Brain.databaseHandler import MySQLHandler
                 handler = MySQLHandler()
                 if handler._db is not None:
                     self._console.info("[StructuredLogger] 📦 MySQL handler activé")
                     return handler
+                self._console.warning("[StructuredLogger] ⚠️ MySQL configuré mais connexion échouée")
             except Exception as e:
                 self._console.warning(f"[StructuredLogger] ⚠️ MySQL non disponible : {e}")
+
+        elif db_type:
+            self._console.warning(f"[StructuredLogger] ⚠️ DB_TYPE inconnu : '{db_type}' (valeurs: 'postgres', 'mysql')")
 
         return DummyDBHandler()
 

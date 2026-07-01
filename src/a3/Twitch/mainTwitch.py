@@ -91,6 +91,7 @@ class TwitchBot(commands.Bot):
         await self.watcher.handle(message)
 
     async def close(self) -> None:
+        await self.watcher.arreter()
         for capture in self._captures.values():
             await capture.arreter()
         for brain in self._brains.values():

@@ -3,11 +3,11 @@
 # Cerveau du système : agrège les scores des filtres et prend les décisions de clip.
 # Gère le déclenchement de l'enregistrement, le découpage et l'envoi au Discord.
 
-import uuid
+import asyncio
 import hashlib
 import logging
-import os
 import time
+import uuid
 from collections import Counter, deque
 from datetime import datetime
 
@@ -26,10 +26,10 @@ POIDS_FILTRES: dict[str, float] = {
     "FiltreEmotions": 0.25,
     "FiltreEmoteDensity": 0.20,
     "FiltreRepetition": 0.10,
-    "FiltreClipActivity": 0.15,
+    "FiltreClipActivity": 0.30,
 }
 
-SEUIL_CLIP: float = 0.45
+SEUIL_CLIP: float = 0.42
 FILTRES_VOLUME = {"FiltreMessageRate", "FiltreUniqueAuthors"}
 DECALAGE_RECORD_AVANT_SEC = 45.0   # combien de secondes avant le trigger on commence à enregistrer
 DUREE_ATTENTE_HYPE_SEC = 15.0      # durée supplémentaire attendue après le dernier pic
@@ -91,14 +91,21 @@ class Brain:
         self._fenetre_dedup_sec: float = 60.0
         self._moments_last_purge: float = 0.0
 
+        self._last_rejet_log: float = 0.0
+        self._pending_tasks: set[asyncio.Task] = set()
+
     async def start(self, capture=None, renderer=None) -> None:
         self.capture = capture
         self.renderer = renderer
         self.debut_live = datetime.now()
-        self._struct_log.log_event(EventType.SESSION_START, {
-            "seuil": self.seuil,
-            "poids": self.poids,
-        }, channel=self.channel, session_id=self.session_id)
+        struct_log = self._struct_log
+        if struct_log is None:
+            log.error("[Brain] ❌ StructuredLogger manquant — session non loguée")
+        else:
+            struct_log.log_event(EventType.SESSION_START, {
+                "seuil": self.seuil,
+                "poids": self.poids,
+            }, channel=self.channel, session_id=self.session_id)
         poids_str = " | ".join(f"{k}: {v}" for k, v in self.poids.items())
         log.info(f"[Brain] 🧠 Démarré — seuil: {self.seuil} | mode: Élastique (TikTok >{DUREE_MIN_TIKTOK_SEC}s) | poids: {poids_str}")
         log.info(f"[Brain] {'✅ StreamCapture actif' if capture else '⚠️  pas de capture vidéo'}")
@@ -130,7 +137,12 @@ class Brain:
         détails = détails_memoire
 
         if self.is_recording:
-            if score_final >= self.seuil:
+            duree_en_cours = maintenant - self._ts_debut_record
+            if duree_en_cours >= 300.0:
+                # Clip trop long — on force la fin pour éviter de dépasser le buffer
+                self._ts_fin_attendue = maintenant
+                log.warning(f"[Brain] ⏰ Clip trop long ({duree_en_cours:.0f}s) — fin forcée à 5 min")
+            elif score_final >= self.seuil:
                 nouveau_ts_fin = maintenant + DUREE_ATTENTE_HYPE_SEC
                 if nouveau_ts_fin > self._ts_fin_attendue:
                     self._ts_fin_attendue = nouveau_ts_fin
@@ -142,16 +154,15 @@ class Brain:
         if not volume_ok:
             return None
 
-        # ── Deduplication ──────────────────────────────────────────
-        moment_hash = self._hash_moment(message, détails)
-        maintenant = time.time()
-        if self._est_duplicate(moment_hash, maintenant):
-            self._log_rejet(message, score_final, détails, "moment déjà capturé (dedup)")
-            return None
-
         if score_final < self.seuil:
             self.clips_rejetes += 1
-            self._log_rejet(message, score_final, détails, "score insuffisant")
+            self._log_rejet(score_final, détails, "score insuffisant")
+            return None
+
+        # ── Deduplication (uniquement pour les moments au-dessus du seuil) ──
+        moment_hash = self._hash_moment(message, détails)
+        if self._est_duplicate(moment_hash, maintenant):
+            self._log_rejet(score_final, détails, "moment déjà capturé (dedup)")
             return None
 
         temps_depuis = maintenant - self._ts_dernier_clip
@@ -163,7 +174,6 @@ class Brain:
             else:
                 self.clips_rejetes += 1
                 self._log_rejet(
-                    message,
                     score_final,
                     détails,
                     f"merge window ({int(MERGE_WINDOW_SEC - temps_depuis)}s restants, pic plus faible)",
@@ -173,7 +183,7 @@ class Brain:
         elif temps_depuis < self._cooldown_actuel:
             restant = int(self._cooldown_actuel - temps_depuis)
             self.clips_rejetes += 1
-            self._log_rejet(message, score_final, détails, f"cooldown ({restant}s restants / {self._cooldown_actuel}s total)")
+            self._log_rejet(score_final, détails, f"cooldown ({restant}s restants / {self._cooldown_actuel}s total)")
             return None
 
         self.clips_detectes += 1
@@ -181,16 +191,17 @@ class Brain:
         self._score_max_clip = score_final
 
         auteur_raw = message.author.name if message else ""
-        auteur_hash = pseudonymize(auteur_raw)
-        self._struct_log.log_clip_detected(
-            clip_num=self.clips_detectes,
-            score=score_final,
-            détails=détails,
-            auteur=auteur_hash,
-            repetition_word=données.get("mot_repetition"),
-            message=message.content[:80] if message else "",
-            channel=self.channel,
-        )
+        auteur_hash = pseudonymize(auteur_raw) or "unknown"
+        if self._struct_log is not None:
+            self._struct_log.log_clip_detected(
+                clip_num=self.clips_detectes,
+                score=score_final,
+                détails=détails,
+                auteur=auteur_hash,
+                repetition_word=données.get("mot_repetition"),
+                message=message.content[:80] if message else "",
+                channel=self.channel,
+            )
 
         self._ts_debut_record = maintenant - DECALAGE_RECORD_AVANT_SEC
         self._ts_fin_attendue = maintenant + DUREE_ATTENTE_HYPE_SEC
@@ -198,11 +209,14 @@ class Brain:
 
         log.info(f"\n[Brain] 🔴 REC DÉMARRÉ (Clip #{self.clips_detectes}) — Attente de la fin de la hype...")
 
-        asyncio.create_task(self._processus_fin_clip())
+        task = asyncio.create_task(self._processus_fin_clip())
+        self._pending_tasks.add(task)
+        task.add_done_callback(self._pending_tasks.discard)
 
         return données
 
     def _hash_moment(self, message, détails: dict) -> str:
+
         """Génère un hash du moment (auteur + filtres actifs) pour la dedup."""
         auteur = message.author.name if message else ""
         filtres_actifs = tuple(sorted(k for k, v in détails.items() if v.get("score_pondéré", 0) > 0))
@@ -226,19 +240,20 @@ class Brain:
         return False
 
     def _annuler_dernier_clip(self) -> None:
+        # Retire le clip de l'historique uniquement — le fichier reste sur disque
+        # car il a déjà été envoyé sur Discord (supprimer casserait les boutons de review)
         if self.historique:
-            dernier = self.historique[-1]
-            chemin = dernier.get("chemin_clip")
-            if chemin:
-                try:
-                    os.remove(chemin)
-                    log.info(f"[Brain] 🗑️ Clip précédent supprimé : {chemin}")
-                except Exception as e:
-                    log.warning(f"[Brain] ⚠️ Impossible de supprimer le clip précédent : {e}")
             self.historique.pop()
             self.clips_detectes -= 1
 
-    async def _processus_fin_clip(self):
+    async def _processus_fin_clip(self) -> None:
+        try:
+            await asyncio.wait_for(self._executeur_clip(), timeout=600.0)
+        except asyncio.TimeoutError:
+            log.error("[Brain] ❌ _processus_fin_clip — timeout global (600s), clip abandonné")
+            self.is_recording = False
+
+    async def _executeur_clip(self) -> None:
         while time.time() < self._ts_fin_attendue:
             await asyncio.sleep(2)
 
@@ -262,15 +277,25 @@ class Brain:
         else:
             log.info(f"[Brain] ⏱️ Le moment a duré longtemps ! Durée finale : {int(duree_calculee)}s")
 
-        donnees = self._donnees_initiales
-        if donnees is None:
+        if self._donnees_initiales is None:
             log.error("[Brain] ❌ _donnees_initiales manquant en fin de clip — clip ignoré")
             return
+
+        # Extraire les champs nécessaires du message TwitchIO avant de les stocker
+        msg = self._donnees_initiales.get("message")
+        auteur_name = getattr(getattr(msg, "author", None), "name", "inconnu") if msg else "inconnu"
+        msg_content = (msg.content[:80] if msg and hasattr(msg, "content") else "")
+
+        # Construction de l'entrée historique (sans l'objet message TwitchIO)
+        donnees: dict = {k: v for k, v in self._donnees_initiales.items() if k != "message"}
         donnees["timestamp"] = datetime.now()
         donnees["score_final"] = self._score_max_clip
+        donnees["auteur_trigger"] = auteur_name
+        donnees["message_content"] = msg_content
+
         self.historique.append(donnees)
 
-        self._log_clip(donnees["message"], self._score_max_clip, donnees["détails"], duree_calculee)
+        self._log_clip(auteur_name, msg_content, self._score_max_clip, donnees["détails"], duree_calculee)
 
         if self.capture:
             nom = f"clip_{self.clips_detectes:03d}_score{self._score_max_clip:.2f}_{int(time.time())}.mp4"
@@ -284,23 +309,25 @@ class Brain:
                 donnees["chemin_clip"] = str(chemins["hq"])
                 liste_previews = chemins.get("previews", [])
                 donnees["chemins_previews"] = [str(p) for p in liste_previews]
-                self._struct_log.log_clip_generated(
-                    clip_num=self.clips_detectes,
-                    score=self._score_max_clip,
-                    chemin=str(chemins["hq"]),
-                    duree_sec=duree_calculee,
-                    channel=self.channel,
-                )
+                if self._struct_log:
+                    self._struct_log.log_clip_generated(
+                        clip_num=self.clips_detectes,
+                        score=self._score_max_clip,
+                        chemin=str(chemins["hq"]),
+                        duree_sec=duree_calculee,
+                        channel=self.channel,
+                    )
                 if liste_previews:
                     log.info(f"[Brain] 🎥 Transmission au Discord de {len(liste_previews)} aperçus découpés.")
             else:
-                self._struct_log.log_clip_generated(
-                    clip_num=self.clips_detectes,
-                    score=self._score_max_clip,
-                    chemin=None,
-                    duree_sec=duree_calculee,
-                    channel=self.channel,
-                )
+                if self._struct_log:
+                    self._struct_log.log_clip_generated(
+                        clip_num=self.clips_detectes,
+                        score=self._score_max_clip,
+                        chemin=None,
+                        duree_sec=duree_calculee,
+                        channel=self.channel,
+                    )
                 log.warning("[Brain] ⚠️  Clip vidéo échoué — buffer insuffisant ?")
 
         # Log du clip dans decisions/
@@ -313,13 +340,17 @@ class Brain:
                 mot_repetition=donnees.get("mot_repetition"),
             )
 
-        if self.renderer:
+        if self.renderer and donnees.get("chemin_clip"):
             donnees["clip_num"] = self.clips_detectes
-            asyncio.create_task(self.renderer.output(donnees))
+            task = asyncio.create_task(self.renderer.output(donnees))
+            self._pending_tasks.add(task)
+            task.add_done_callback(self._pending_tasks.discard)
+        elif self.renderer and not donnees.get("chemin_clip"):
+            log.warning("[Brain] ⚠️ Clip non envoyé sur Discord — fichier vidéo absent")
 
-    def _log_clip(self, message, score: float, détails: dict, duree: float) -> None:
-        auteur_name = message.author.name if message and hasattr(message, "author") and message.author else "inconnu"
-        msg_content = message.content[:80] if message and hasattr(message, "content") else ""
+    def _log_clip(self, auteur: str, contenu: str, score: float, détails: dict, duree: float) -> None:
+        auteur_name = auteur
+        msg_content = contenu
         lignes = [
             f"\n{'=' * 55}",
             f"[Brain] 🎬 CLIP #{self.clips_detectes} VALIDÉ ET DÉCOUPÉ",
@@ -338,10 +369,14 @@ class Brain:
         lignes.append(f"{'=' * 55}")
         log.info("\n".join(lignes))
 
-    def _log_rejet(self, message, score: float, détails: dict, raison: str) -> None:
+    def _log_rejet(self, score: float, détails: dict, raison: str) -> None:
         filtres_actifs = [f for f, v in détails.items() if v["score_pondéré"] > 0]
         if not filtres_actifs or score < self.seuil * 0.30:
             return
+        maintenant = time.time()
+        if maintenant - self._last_rejet_log < 10.0:
+            return
+        self._last_rejet_log = maintenant
         ratio = min(score / self.seuil, 1.0)
         barre = "█" * int(ratio * 10) + "░" * (10 - int(ratio * 10))
         log.info(f"[Brain] 🟡 [{barre}] {score:.2f}/{self.seuil} — {raison} — filtres: {', '.join(filtres_actifs)}")
@@ -426,14 +461,24 @@ class Brain:
         log.info(f"{'=' * 55}")
 
     async def stop(self) -> None:
-        # Logger la fin de session
-        self._struct_log.log_event(EventType.SESSION_STOP, {
-            "clips_detectes": self.clips_detectes,
-            "clips_rejetes": self.clips_rejetes,
-            "score_moyen": sum(d["score_final"] for d in self.historique) / len(self.historique) if self.historique else 0,
-            "score_max": max((d["score_final"] for d in self.historique), default=0),
-            "duree_session_sec": (datetime.now() - self.debut_live).total_seconds(),
-        }, channel=self.channel, session_id=self.session_id)
+        # Annuler les tâches en cours (clip en fin d'enregistrement, envoi Discord)
+        for task in list(self._pending_tasks):
+            if not task.done():
+                task.cancel()
+                try:
+                    await task
+                except (asyncio.CancelledError, Exception):
+                    pass
+        self._pending_tasks.clear()
+
+        if self._struct_log is not None:
+            self._struct_log.log_event(EventType.SESSION_STOP, {
+                "clips_detectes": self.clips_detectes,
+                "clips_rejetes": self.clips_rejetes,
+                "score_moyen": sum(d["score_final"] for d in self.historique) / len(self.historique) if self.historique else 0,
+                "score_max": max((d["score_final"] for d in self.historique), default=0),
+                "duree_session_sec": (datetime.now() - self.debut_live).total_seconds(),
+            }, channel=self.channel, session_id=self.session_id)
 
         self.afficher_bilan_final()
 

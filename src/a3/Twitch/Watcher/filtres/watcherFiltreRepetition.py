@@ -7,6 +7,7 @@ import re
 import time
 from collections import Counter, deque
 from pathlib import Path
+
 from a3.Twitch.Watcher.filtres.watcherFiltreBase import FiltreAdaptatif
 from a3.utils.privacy import pseudonymize
 
@@ -49,7 +50,7 @@ class FiltreRepetition(FiltreAdaptatif):
         self.longueur_min_mot = longueur_min_mot
         self._blacklist: set[str] = _charger_blacklist()
         self._fenetre_deque: deque[tuple[float, set[str]]] = deque()
-        self._dernier_mot_dominant_hash: str = ""
+        self._dernier_mot_dominant_hash: str | None = None
 
     MOTS_VIDES = {
         "le", "la", "les", "de", "du", "des", "un", "une", "et", "en",
@@ -80,7 +81,6 @@ class FiltreRepetition(FiltreAdaptatif):
             return 0.0
         mot_dominant, count = compteur.most_common(1)[0]
         self._dernier_mot_dominant_hash = pseudonymize(mot_dominant)
-        logger.warning(f"[Repetition] 🔥 RÉPÉTITION — mot: '{mot_dominant}' / hash: {self._dernier_mot_dominant_hash}")
         return count / total
 
     def analyser(self, message) -> float:
@@ -90,5 +90,5 @@ class FiltreRepetition(FiltreAdaptatif):
         score = self._evaluer_signal(signal, maintenant)
         if score > 0.0:
             s = self.stats()
-            logger.warning(f"[Repetition] 🔥 score: {score:.3f} / seuil: {s['seuil']:.2f}")
+            logger.warning(f"[Repetition] 🔥 score: {score:.3f} / seuil: {s['seuil']:.2f} / hash: {self._dernier_mot_dominant_hash}")
         return score

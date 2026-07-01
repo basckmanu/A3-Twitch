@@ -32,7 +32,7 @@ def _resolve_base() -> Path:
 
 _BASE = _resolve_base()
 
-BUFFER_DUREE_MAX_SEC = 360
+BUFFER_DUREE_MAX_SEC = 600
 DUREE_SEGMENT_SEC = 30
 DELAI_CHAT_VIDEO_SEC = 8
 QUALITE_STREAM = "best"
@@ -74,8 +74,8 @@ class StreamCapture:
 
         self._segments_dir = _segments_dir(channel)
         self._clips_dir = _clips_dir(channel)
-        self._segments_dir.mkdir(exist_ok=True)
-        self._clips_dir.mkdir(exist_ok=True)
+        self._segments_dir.mkdir(parents=True, exist_ok=True)
+        self._clips_dir.mkdir(parents=True, exist_ok=True)
 
     async def demarrer(self):
         if self._actif:
@@ -224,17 +224,23 @@ class StreamCapture:
             "-i",
             str(chemin_sortie),
             "-vf",
-            "scale=-2:480",
+            "scale=-2:360",
             "-c:v",
             "libx264",
             "-crf",
-            "28",
+            "32",
             "-preset",
             "veryfast",
+            "-b:v",
+            "400k",
+            "-maxrate",
+            "600k",
+            "-bufsize",
+            "1200k",
             "-c:a",
             "aac",
             "-b:a",
-            "96k",
+            "64k",
             "-movflags",
             "+faststart",
             str(chemin_preview),
@@ -243,7 +249,7 @@ class StreamCapture:
             "error",
         ]
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
 
         # Lancer les deux ffmpeg en parallèle
         async def _run_ffmpeg(cmd: list[str], timeout_s: int, label: str) -> bool:

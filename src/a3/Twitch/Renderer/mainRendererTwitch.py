@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import shutil
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -29,11 +30,15 @@ try:
 except ValueError:
     DISCORD_CHANNEL_ID = 0
     log.warning("[Renderer] ⚠️ DISCORD_CHANNEL_ID invalide, mis à 0")
-DISCORD_ALLOWED_USERS = {uid.strip() for uid in os.getenv("DISCORD_ALLOWED_USERS", "").split(",") if uid.strip()}
+DISCORD_ALLOWED_USERS: set[int] = {
+    int(uid.strip()) for uid in os.getenv("DISCORD_ALLOWED_USERS", "").split(",")
+    if uid.strip().isdigit()
+}
 
 FICHIER_BLACKLIST = _BASE / "blacklist_mots.json"
+FICHIER_PENDING = _BASE / "pending_reviews.json"
 
-TAILLE_MAX_MB = 24.0
+TAILLE_MAX_MB = 8.0
 
 # ------------------------------------------------------------------ #
 #  Blacklist                                                         #
@@ -51,6 +56,38 @@ def charger_blacklist() -> set[str]:
         import logging
         logging.getLogger("A3").warning(f"[Renderer] ⚠️ Blacklist load failed: {e}")
         return set()
+
+
+# ------------------------------------------------------------------ #
+#  Pending reviews (persistance entre redémarrages)                  #
+# ------------------------------------------------------------------ #
+
+def _lire_pending() -> list[dict]:
+    if not FICHIER_PENDING.exists():
+        return []
+    try:
+        with open(FICHIER_PENDING, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return []
+
+def _ecrire_pending(clips: list[dict]) -> None:
+    try:
+        with open(FICHIER_PENDING, "w", encoding="utf-8") as f:
+            json.dump(clips, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        log.warning(f"[Renderer] ⚠️ Impossible d'écrire pending_reviews.json: {e}")
+
+def _ajouter_pending(clip_num: int, chemin_clip: str, channel: str, mot_repetition: str | None) -> None:
+    clips = _lire_pending()
+    clips = [c for c in clips if c.get("clip_num") != clip_num]
+    clips.append({"clip_num": clip_num, "chemin_clip": chemin_clip, "channel": channel, "mot_repetition": mot_repetition})
+    _ecrire_pending(clips)
+
+def _retirer_pending(clip_num: int) -> None:
+    clips = _lire_pending()
+    clips = [c for c in clips if c.get("clip_num") != clip_num]
+    _ecrire_pending(clips)
 
 
 # ------------------------------------------------------------------ #
@@ -75,44 +112,46 @@ class ClipView(discord.ui.View):
         self.decision_logger = decision_logger
         self.mot_repetition = mot_repetition
         self._struct_log = structured_logger
+        self._sent_at: float = time.time()
 
-        # Boutons avec custom_id unique dès la création (évite les collisions Discord)
-        btn_garder = discord.ui.Button(
+        btn_garder: discord.ui.Button = discord.ui.Button(
             label="✅ Garder", style=discord.ButtonStyle.success,
             custom_id=f"garder_{clip_num}"
         )
-        btn_garder.callback = self.garder
+        btn_garder.callback = self.garder  # type: ignore[assignment, method-assign]
         self.add_item(btn_garder)
 
-        btn_highlight = discord.ui.Button(
+        btn_highlight: discord.ui.Button = discord.ui.Button(
             label="⭐ Highlight", style=discord.ButtonStyle.primary,
             custom_id=f"highlight_{clip_num}"
         )
-        btn_highlight.callback = self.highlight
+        btn_highlight.callback = self.highlight  # type: ignore[assignment, method-assign]
         self.add_item(btn_highlight)
 
-        btn_supprimer = discord.ui.Button(
+        btn_supprimer: discord.ui.Button = discord.ui.Button(
             label="🗑️ Supprimer", style=discord.ButtonStyle.danger,
             custom_id=f"supprimer_{clip_num}"
         )
-        btn_supprimer.callback = self.supprimer
+        btn_supprimer.callback = self.supprimer  # type: ignore[assignment, method-assign]
         self.add_item(btn_supprimer)
 
     def _dest_dir(self, sub: str) -> Path:
         d = _CHANNEL(self.channel, sub)
-        d.mkdir(exist_ok=True)
+        d.mkdir(parents=True, exist_ok=True)
         return d
 
-    async def garder(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+    async def garder(self, interaction: discord.Interaction) -> None:
         if DISCORD_ALLOWED_USERS and interaction.user.id not in DISCORD_ALLOWED_USERS:
             await interaction.response.send_message("⛔ Pas autorisé.", ephemeral=True)
             return
         chemin_dest = self._deplacer("validated")
         if chemin_dest:
+            _retirer_pending(self.clip_num)
             if self.decision_logger:
                 self.decision_logger.log_decision(self.clip_num, "garder", interaction.user.name)
             if self._struct_log:
-                self._struct_log.log_review(self.clip_num, "garder", interaction.user.name, interaction.user.id)
+                self._struct_log.log_review(self.clip_num, "garder", interaction.user.name, 0,
+                                            reaction_time_sec=round(time.time() - self._sent_at, 1))
             await interaction.response.edit_message(
                 content=(interaction.message.content if interaction.message else "") + f"\n\n✅ **Gardé** par {interaction.user.name} → `{chemin_dest}`",
                 view=None,
@@ -121,16 +160,18 @@ class ClipView(discord.ui.View):
         else:
             await interaction.response.send_message("⚠️ Fichier introuvable ou déjà traité.", ephemeral=True)
 
-    async def highlight(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+    async def highlight(self, interaction: discord.Interaction) -> None:
         if DISCORD_ALLOWED_USERS and interaction.user.id not in DISCORD_ALLOWED_USERS:
             await interaction.response.send_message("⛔ Pas autorisé.", ephemeral=True)
             return
         chemin_dest = self._deplacer("highlights")
         if chemin_dest:
+            _retirer_pending(self.clip_num)
             if self.decision_logger:
                 self.decision_logger.log_decision(self.clip_num, "highlight", interaction.user.name)
             if self._struct_log:
-                self._struct_log.log_review(self.clip_num, "highlight", interaction.user.name, interaction.user.id)
+                self._struct_log.log_review(self.clip_num, "highlight", interaction.user.name, 0,
+                                            reaction_time_sec=round(time.time() - self._sent_at, 1))
             await interaction.response.edit_message(
                 content=(interaction.message.content if interaction.message else "") + f"\n\n⭐ **Highlight** par {interaction.user.name} → `{chemin_dest}`",
                 view=None,
@@ -139,7 +180,7 @@ class ClipView(discord.ui.View):
         else:
             await interaction.response.send_message("⚠️ Fichier introuvable ou déjà traité.", ephemeral=True)
 
-    async def supprimer(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+    async def supprimer(self, interaction: discord.Interaction) -> None:
         if DISCORD_ALLOWED_USERS and interaction.user.id not in DISCORD_ALLOWED_USERS:
             await interaction.response.send_message("⛔ Pas autorisé.", ephemeral=True)
             return
@@ -151,10 +192,12 @@ class ClipView(discord.ui.View):
             if self.decision_logger:
                 self.decision_logger.log_decision(self.clip_num, "supprimer", interaction.user.name)
             if self._struct_log:
-                self._struct_log.log_review(self.clip_num, "supprimer", interaction.user.name, interaction.user.id)
+                self._struct_log.log_review(self.clip_num, "supprimer", interaction.user.name, 0,
+                                            reaction_time_sec=round(time.time() - self._sent_at, 1))
         except Exception as exc:
             log.error(f"[Renderer] erreur log_review/log_decision → {exc}")
         try:
+            _retirer_pending(self.clip_num)
             self._supprimer()
             if interaction.message:
                 await interaction.message.delete()
@@ -180,7 +223,7 @@ class ClipView(discord.ui.View):
             except Exception as exc:
                 log.error(f"[Renderer] _supprimer: erreur shutil.move → {exc}")
         else:
-            log.warning(f"[Renderer] _supprimer: fichier introuvable ou déjà traité — {self.chemin_clip}")
+            log.warning(f"[Renderer] _supprimer: fichier introuvable — {self.chemin_clip}")
 
 
 # ------------------------------------------------------------------ #
@@ -201,21 +244,24 @@ class Renderer:
     def _clip_dir(self, sub: str) -> Path:
         return _CHANNEL(self.channel, sub)
 
-    def _resolved_clip_path(self, chemin_clip: str) -> Path | None:
-        if not chemin_clip:
-            return None
-        p = Path(chemin_clip)
-        if p.exists():
-            return p
-        # Try current directory relative path
-        resolved = self._clip_dir("output") / Path(chemin_clip).name
-        if resolved.exists():
-            return resolved
-        return None
-
     async def start(self) -> None:
         intents = discord.Intents.default()
         self._client = discord.Client(intents=intents)
+
+        # Pré-enregistrer les views persistantes pour les clips en attente de review
+        pending = _lire_pending()
+        for entry in pending:
+            view = ClipView(
+                channel=entry.get("channel", self.channel),
+                chemin_clip=entry.get("chemin_clip", ""),
+                clip_num=entry["clip_num"],
+                decision_logger=self.decision_logger,
+                mot_repetition=entry.get("mot_repetition"),
+                structured_logger=self._struct_log,
+            )
+            self._client.add_view(view)
+        if pending:
+            log.info(f"[Renderer] 🔄 {len(pending)} view(s) persistante(s) rechargée(s)")
 
         @self._client.event
         async def on_ready():
@@ -251,9 +297,9 @@ class Renderer:
         détails = données.get("détails", {})
         mot_rep = données.get("mot_repetition")
 
-        auteur = message.author.name if message else "inconnu"
+        auteur = données.get("auteur_trigger") or (message.author.name if message else "inconnu")
         streamer = données.get("channel") or self.channel or "inconnu"
-        contenu_msg = message.content[:80] if message else ""
+        contenu_msg = données.get("message_content") or (message.content[:80] if message else "")
         heure = timestamp.strftime("%H:%M:%S")
 
         filtres_actifs = [f"`{nom}` ({v.get('score_pondéré', 0):.2f})" for nom, v in détails.items() if v.get("score_pondéré", 0) > 0]
@@ -261,6 +307,10 @@ class Renderer:
         contenu = f"🎬 **Clip #{clip_num}** — **{streamer}** — {heure}\nScore : **{score:.2f}** | Déclenché par : `{auteur}` : *{contenu_msg}*\nFiltres : {', '.join(filtres_actifs) or 'aucun'}\n📁 `{chemin_hq}`"
         if mot_rep:
             contenu += f"\n🔤 Mot répété : `{mot_rep}`"
+
+        # Sauvegarder avant envoi pour que les boutons survivent aux redémarrages
+        if chemin_hq:
+            _ajouter_pending(clip_num, chemin_hq, self.channel, mot_rep)
 
         view = ClipView(
             chemin_clip=chemin_hq or "",
@@ -270,6 +320,9 @@ class Renderer:
             structured_logger=self._struct_log,
             channel=self.channel,
         )
+        # Enregistrer la view pour que les interactions fonctionnent immédiatement
+        if self._client:
+            self._client.add_view(view)
 
         if previews:
             await self._envoyer_avec_previews(contenu, previews, view)

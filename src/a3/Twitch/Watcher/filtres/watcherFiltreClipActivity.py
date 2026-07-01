@@ -52,7 +52,7 @@ class FiltreClipActivity:
         self.cooldown = cooldown
 
         self._clips_recents: deque[float] = deque()  # timestamps des clips détectés
-        self._clips_vus: set[str] = set()  # IDs déjà comptabilisés
+        self._clips_vus: dict[str, float] = {}  # clip_id → timestamp d'observation
         self._app_token: str | None = None
         self._score_actuel: float = 0.0
         self._ts_dernier_trigger: float = 0.0
@@ -100,7 +100,7 @@ class FiltreClipActivity:
                     # Retry once with new token
                     async with self._session.get(
                         "https://api.twitch.tv/helix/clips",
-                        headers={"Authorization": f"Bearer {self._token}", "Client-Id": self._client_id},
+                        headers={"Authorization": f"Bearer {self._app_token}", "Client-Id": self.client_id},
                         params=params,
                     ) as resp_retry:
                         if resp_retry.status != 200:
@@ -111,7 +111,7 @@ class FiltreClipActivity:
 
             clips = data.get("data", [])
             for clip in clips:
-                self._clips_vus.add(clip["id"])
+                self._clips_vus[clip["id"]] = maintenant
 
             if clips:
                 logger.info(f"[ClipActivity] 📎 Pre-seeding: {len(clips)} clips existants déjà enregistrés")
@@ -183,14 +183,17 @@ class FiltreClipActivity:
         for clip in clips:
             clip_id = clip["id"]
             if clip_id not in self._clips_vus:
-                self._clips_vus.add(clip_id)
+                self._clips_vus[clip_id] = maintenant
                 self._clips_recents.append(maintenant)
                 nouveaux += 1
 
-        # Purger les vieux timestamps
+        # Purger les vieux timestamps et nettoyer _clips_vus pour éviter la fuite mémoire
         limite = maintenant - self.fenetre_sec
         while self._clips_recents and self._clips_recents[0] < limite:
             self._clips_recents.popleft()
+        # Purge des IDs plus vieux que 2× la fenêtre (garde un petit historique)
+        limite_vus = maintenant - self.fenetre_sec * 2
+        self._clips_vus = {cid: ts for cid, ts in self._clips_vus.items() if ts >= limite_vus}
 
         nb_clips = len(self._clips_recents)
 

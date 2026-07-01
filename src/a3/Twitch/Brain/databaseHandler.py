@@ -16,6 +16,7 @@ from datetime import datetime
 from typing import Any
 
 from a3.Twitch.Brain.structuredLogger import DatabaseHandler, EventType
+from a3.utils.privacy import pseudonymize
 
 log = logging.getLogger("A3")
 
@@ -38,7 +39,7 @@ class MySQLHandler(DatabaseHandler):
         flush_interval_sec: float = 5.0,
     ) -> None:
         self._host = host or os.getenv("DB_HOST", "localhost")
-        self._port = int(port or os.getenv("DB_PORT", "3306"))
+        self._port = int(port or os.getenv("DB_PORT", "3306"))  # type: ignore[arg-type]
         self._user = user or os.getenv("DB_USER", "root")
         self._password = password or os.getenv("DB_PASSWORD", "")
         self._database = database or os.getenv("DB_NAME", "a3_db")
@@ -63,7 +64,7 @@ class MySQLHandler(DatabaseHandler):
                 host=self._host,
                 port=self._port,
                 user=self._user,
-                password=self._password,
+                password=self._password or "",  # type: ignore[arg-type]
                 database=self._database,
                 autocommit=False,
             )
@@ -82,7 +83,7 @@ class MySQLHandler(DatabaseHandler):
                     host=self._host,
                     port=self._port,
                     user=self._user,
-                    password=self._password,
+                    password=self._password or "",  # type: ignore[arg-type]
                     database=self._database,
                     autocommit=False,
                     cursorclass=pymysql.cursors.DictCursor,
@@ -110,8 +111,8 @@ class MySQLHandler(DatabaseHandler):
         try:
             self._cursor.execute("CREATE DATABASE IF NOT EXISTS a3_db CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci")
             self._cursor.execute("USE a3_db")
-        except Exception:
-            pass
+        except Exception as e:
+            log.warning(f"[MySQLHandler] ⚠️ CREATE DATABASE ignoré (pas de privilege ou DB existe déjà): {e}")
 
         # Table principale : events
         self._cursor.execute("""
@@ -153,7 +154,7 @@ class MySQLHandler(DatabaseHandler):
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         """)
 
-        # Table : clip_reviews
+        # Table : clip_reviews — reviewer_hash uniquement, jamais d'ID/nom brut (RGPD art. 25)
         self._cursor.execute("""
             CREATE TABLE IF NOT EXISTS clip_reviews (
                 id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
@@ -161,11 +162,11 @@ class MySQLHandler(DatabaseHandler):
                 channel VARCHAR(128) NOT NULL,
                 session_id VARCHAR(16) NOT NULL,
                 action ENUM('garder', 'highlight', 'supprimer') NOT NULL,
-                user_id BIGINT UNSIGNED NOT NULL,
-                username VARCHAR(128) NOT NULL,
+                reviewer_hash CHAR(16) NOT NULL,
+                reaction_time_sec DECIMAL(6,1) NULL,
                 timestamp_review DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
                 INDEX idx_clip_num (clip_num),
-                INDEX idx_user (user_id),
+                INDEX idx_reviewer (reviewer_hash),
                 INDEX idx_timestamp (timestamp_review)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         """)
@@ -208,6 +209,20 @@ class MySQLHandler(DatabaseHandler):
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         """)
 
+        # Migration : remplace user_id/username par reviewer_hash sur tables existantes
+        migrations = [
+            "ALTER TABLE clip_reviews ADD COLUMN IF NOT EXISTS reviewer_hash CHAR(16) NOT NULL DEFAULT ''",
+            "ALTER TABLE clip_reviews ADD COLUMN IF NOT EXISTS reaction_time_sec DECIMAL(6,1) NULL",
+            "ALTER TABLE clip_reviews DROP COLUMN IF EXISTS user_id",
+            "ALTER TABLE clip_reviews DROP COLUMN IF EXISTS username",
+            "ALTER TABLE clips DROP COLUMN IF EXISTS decision_user",
+        ]
+        for sql in migrations:
+            try:
+                self._cursor.execute(sql)
+            except Exception as mig_err:
+                log.debug(f"[MySQLHandler] migration ignorée : {mig_err}")
+
         self._db.commit()
         self._tables_created = True
         log.info("[MySQLHandler] ✅ Tables créées/vérifiées avec succès")
@@ -246,9 +261,38 @@ class MySQLHandler(DatabaseHandler):
         except queue.Full:
             log.warning("[MySQLHandler] ⚠️ Queue pleine, event droppé")
 
+    def _reconnect(self) -> bool:
+        log.info("[MySQLHandler] 🔄 Tentative de reconnexion...")
+        try:
+            if self._cursor:
+                try:
+                    self._cursor.close()
+                except Exception:
+                    pass
+            if self._db:
+                try:
+                    self._db.close()
+                except Exception:
+                    pass
+            self._cursor = None
+            self._db = None
+            self._tables_created = False
+            self._connect()
+            return self._db is not None
+        except Exception as e:
+            log.error(f"[MySQLHandler] ❌ Reconnexion échouée : {e}")
+            return False
+
+    @staticmethod
+    def _is_connection_error(e: Exception) -> bool:
+        msg = str(e).lower()
+        return any(k in msg for k in ("lost connection", "broken pipe", "gone away", "connection refused", "can't connect"))
+
     def _insert_batch(self, batch: list[dict]) -> None:
         if not self._cursor or not self._db:
-            return
+            if not self._reconnect():
+                log.warning(f"[MySQLHandler] ⚠️ DB indisponible — {len(batch)} events perdus")
+                return
 
         try:
             for event in batch:
@@ -261,6 +305,14 @@ class MySQLHandler(DatabaseHandler):
                 self._db.rollback()
             except Exception:
                 pass
+            if self._is_connection_error(e) and self._reconnect():
+                try:
+                    for event in batch:
+                        self._inserer_event(event)
+                    self._db.commit()
+                    log.info(f"[MySQLHandler] ✅ Retry après reconnexion — {len(batch)} events insérés")
+                except Exception as e2:
+                    log.error(f"[MySQLHandler] ❌ Retry échoué : {e2}")
 
     def _inserer_event(self, event: dict) -> None:
         """Route chaque event vers la bonne table."""
@@ -321,40 +373,38 @@ class MySQLHandler(DatabaseHandler):
             log.debug(f"[MySQLHandler] ⚠️ Insert clip_detected échoué: {e}")
 
     def _insert_review(self, event: dict, data: dict, event_type: str) -> None:
-        """Insère dans la table clip_reviews."""
+        """Insère dans la table clip_reviews. Aucun ID/nom brut — hash uniquement (RGPD art. 25)."""
         try:
-            # Mapper l'event_type vers la decision
             action_map = {
                 EventType.REVIEW_GARDER: "garder",
                 EventType.REVIEW_HIGHLIGHT: "highlight",
                 EventType.REVIEW_SUPPRIMER: "supprimer",
             }
             action = action_map.get(event_type, "")
+            reviewer_hash = pseudonymize(data.get("user", "")) or "unknown"
+            reaction_time = data.get("reaction_time_sec") or None
 
             insert_sql = """
-                INSERT INTO clip_reviews (clip_num, channel, session_id, action, user_id, username, timestamp_review)
+                INSERT INTO clip_reviews (clip_num, channel, session_id, action, reviewer_hash, reaction_time_sec, timestamp_review)
                 VALUES (%s, %s, %s, %s, %s, %s, %s)
             """
-            user_id = data.get("user_id", 0)
             self._cursor.execute(insert_sql, (
                 data.get("clip_num"),
                 event.get("channel", ""),
                 event.get("session_id", ""),
                 action,
-                user_id,
-                data.get("user", ""),
+                reviewer_hash,
+                reaction_time,
                 event.get("timestamp", datetime.now()),
             ))
 
-            # Mettre à jour la table clips
             update_sql = """
-                UPDATE clips SET decision = %s, decision_user = %s, timestamp_decision = %s
+                UPDATE clips SET decision = %s, timestamp_decision = %s
                 WHERE clip_num = %s AND channel = %s AND session_id = %s
                 ORDER BY timestamp_creation DESC LIMIT 1
             """
             self._cursor.execute(update_sql, (
                 action,
-                data.get("user", ""),
                 event.get("timestamp", datetime.now()),
                 data.get("clip_num"),
                 event.get("channel", ""),
