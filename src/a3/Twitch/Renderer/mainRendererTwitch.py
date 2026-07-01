@@ -144,41 +144,52 @@ class ClipView(discord.ui.View):
         if DISCORD_ALLOWED_USERS and interaction.user.id not in DISCORD_ALLOWED_USERS:
             await interaction.response.send_message("⛔ Pas autorisé.", ephemeral=True)
             return
-        chemin_dest = self._deplacer("validated")
-        if chemin_dest:
-            _retirer_pending(self.clip_num)
-            if self.decision_logger:
-                self.decision_logger.log_decision(self.clip_num, "garder", interaction.user.name)
-            if self._struct_log:
-                self._struct_log.log_review(self.clip_num, "garder", interaction.user.name, 0,
-                                            reaction_time_sec=round(time.time() - self._sent_at, 1))
-            await interaction.response.edit_message(
-                content=(interaction.message.content if interaction.message else "") + f"\n\n✅ **Gardé** par {interaction.user.name} → `{chemin_dest}`",
-                view=None,
-            )
-            log.info(f"[Renderer] ✅ Clip #{self.clip_num} gardé → {chemin_dest}")
-        else:
-            await interaction.response.send_message("⚠️ Fichier introuvable ou déjà traité.", ephemeral=True)
+        # Accuser réception tout de suite — Discord n'accorde que 3s pour la première
+        # réponse, et le déplacement du fichier vidéo (dizaines de Mo) peut dépasser ce
+        # délai (antivirus, I/O disque...), ce qui faisait échouer le clic silencieusement.
+        await interaction.response.defer()
+        try:
+            chemin_dest = self._deplacer("validated")
+            if chemin_dest:
+                _retirer_pending(self.clip_num)
+                if self.decision_logger:
+                    self.decision_logger.log_decision(self.clip_num, "garder", interaction.user.name)
+                if self._struct_log:
+                    self._struct_log.log_review(self.clip_num, "garder", interaction.user.name, 0,
+                                                reaction_time_sec=round(time.time() - self._sent_at, 1))
+                await interaction.edit_original_response(
+                    content=(interaction.message.content if interaction.message else "") + f"\n\n✅ **Gardé** par {interaction.user.name} → `{chemin_dest}`",
+                    view=None,
+                )
+                log.info(f"[Renderer] ✅ Clip #{self.clip_num} gardé → {chemin_dest}")
+            else:
+                await interaction.followup.send("⚠️ Fichier introuvable ou déjà traité.", ephemeral=True)
+        except Exception as exc:
+            log.error(f"[Renderer] erreur dans garder() → {exc}")
 
     async def highlight(self, interaction: discord.Interaction) -> None:
         if DISCORD_ALLOWED_USERS and interaction.user.id not in DISCORD_ALLOWED_USERS:
             await interaction.response.send_message("⛔ Pas autorisé.", ephemeral=True)
             return
-        chemin_dest = self._deplacer("highlights")
-        if chemin_dest:
-            _retirer_pending(self.clip_num)
-            if self.decision_logger:
-                self.decision_logger.log_decision(self.clip_num, "highlight", interaction.user.name)
-            if self._struct_log:
-                self._struct_log.log_review(self.clip_num, "highlight", interaction.user.name, 0,
-                                            reaction_time_sec=round(time.time() - self._sent_at, 1))
-            await interaction.response.edit_message(
-                content=(interaction.message.content if interaction.message else "") + f"\n\n⭐ **Highlight** par {interaction.user.name} → `{chemin_dest}`",
-                view=None,
-            )
-            log.info(f"[Renderer] ⭐ Clip #{self.clip_num} marqué highlight → {chemin_dest}")
-        else:
-            await interaction.response.send_message("⚠️ Fichier introuvable ou déjà traité.", ephemeral=True)
+        await interaction.response.defer()
+        try:
+            chemin_dest = self._deplacer("highlights")
+            if chemin_dest:
+                _retirer_pending(self.clip_num)
+                if self.decision_logger:
+                    self.decision_logger.log_decision(self.clip_num, "highlight", interaction.user.name)
+                if self._struct_log:
+                    self._struct_log.log_review(self.clip_num, "highlight", interaction.user.name, 0,
+                                                reaction_time_sec=round(time.time() - self._sent_at, 1))
+                await interaction.edit_original_response(
+                    content=(interaction.message.content if interaction.message else "") + f"\n\n⭐ **Highlight** par {interaction.user.name} → `{chemin_dest}`",
+                    view=None,
+                )
+                log.info(f"[Renderer] ⭐ Clip #{self.clip_num} marqué highlight → {chemin_dest}")
+            else:
+                await interaction.followup.send("⚠️ Fichier introuvable ou déjà traité.", ephemeral=True)
+        except Exception as exc:
+            log.error(f"[Renderer] erreur dans highlight() → {exc}")
 
     async def supprimer(self, interaction: discord.Interaction) -> None:
         if DISCORD_ALLOWED_USERS and interaction.user.id not in DISCORD_ALLOWED_USERS:

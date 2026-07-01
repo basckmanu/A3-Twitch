@@ -666,7 +666,11 @@ class PostgresHandler(DatabaseHandler):
 
             auteur_hash = pseudonymize(data.get("auteur", "")) or None
             session_pk = self._session_pks.get(channel_name)
-            if session_pk is not None and data.get("filtre"):
+            if (
+                session_pk is not None
+                and data.get("filtre")
+                and event_type in (EventType.FILTER_TRIGGER, EventType.FILTER_SCORE)
+            ):
                 self._exec_safe(
                     """INSERT INTO filter_events
                     (session_id, channel_id, filter_name, event_type, score_weighted, z_score, author_id, is_triggered, timestamp)
@@ -874,8 +878,10 @@ class PostgresHandler(DatabaseHandler):
                 event.get("timestamp", datetime.now(timezone.utc)),
             ))
 
-            # Décision sur le clip (première review uniquement)
-            if clip_db_id is not None and is_first:
+            # Décision sur le clip — toujours la dernière action en date (un reviewer
+            # peut se raviser après un premier clic ; is_first_review ne sert qu'aux
+            # statistiques de réactivité, pas à figer la décision sur le 1er clic)
+            if clip_db_id is not None:
                 self._cursor.execute(
                     "UPDATE clips SET decision = %s, reviewed_at = %s, reviewer_hash = %s WHERE id = %s",
                     (action, event.get("timestamp", datetime.now(timezone.utc)), reviewer_hash, clip_db_id),

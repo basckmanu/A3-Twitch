@@ -21,11 +21,11 @@ log = logging.getLogger("A3")
 # ------------------------------------------------------------------ #
 
 POIDS_FILTRES: dict[str, float] = {
-    "FiltreMessageRate": 0.30,
-    "FiltreUniqueAuthors": 0.35,
-    "FiltreEmotions": 0.25,
+    "FiltreMessageRate": 0.20,
+    "FiltreUniqueAuthors": 0.20,
+    "FiltreEmotions": 0.35,
     "FiltreEmoteDensity": 0.20,
-    "FiltreRepetition": 0.10,
+    "FiltreRepetition": 0.12,
     "FiltreClipActivity": 0.30,
 }
 
@@ -34,7 +34,7 @@ FILTRES_VOLUME = {"FiltreMessageRate", "FiltreUniqueAuthors"}
 DECALAGE_RECORD_AVANT_SEC = 45.0   # combien de secondes avant le trigger on commence à enregistrer
 DUREE_ATTENTE_HYPE_SEC = 15.0      # durée supplémentaire attendue après le dernier pic
 DUREE_MIN_TIKTOK_SEC: float = 65.0
-MERGE_WINDOW_SEC: int = 300
+MERGE_WINDOW_SEC: int = 150
 
 COOLDOWN_MIN_SEC: int = 120
 COOLDOWN_MAX_SEC: int = 480

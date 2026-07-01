@@ -66,7 +66,7 @@ class TwitchBot(commands.Bot):
             decision_logger=self.decision_logger,
             struct_log=struct_log,
         )
-        self.watcher = Watcher()
+        self.watcher = Watcher(struct_log=struct_log)
 
     async def event_ready(self) -> None:
         channels_str = ", ".join([self._target_channel] if self._target_channel else CHANNELS)

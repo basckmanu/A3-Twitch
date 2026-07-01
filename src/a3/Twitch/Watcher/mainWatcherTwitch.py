@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 from a3.config import CHANNEL_ID, CLIENT_ID, CLIENT_SECRET, TOKEN
+from a3.Twitch.Brain.structuredLogger import EventType, StructuredLogger
 from a3.Twitch.Watcher.filtres.watcherFiltreBase import FiltreAdaptatif
 from a3.Twitch.Watcher.filtres.watcherFiltreClipActivity import FiltreClipActivity
 from a3.Twitch.Watcher.filtres.watcherFiltreEmoteDensity import FiltreEmoteDensity
@@ -22,9 +23,10 @@ log = logging.getLogger("A3")
 
 
 class Watcher:
-    def __init__(self) -> None:
+    def __init__(self, struct_log: StructuredLogger | None = None) -> None:
         self._brains: dict[str, "Brain"] = {}
         self.renderer = None
+        self._struct_log = struct_log
         # Filtres indépendants par channel (statistiques Welford isolées)
         self._filtres_par_channel: dict[str, list] = {}
         self._filtres_adaptatifs_par_channel: dict[str, dict[str, FiltreAdaptatif]] = {}
@@ -168,6 +170,17 @@ class Watcher:
                             f"({samples} samples | mean: {s['mean']:.2f} | std: {s['std']:.2f}) "
                             f"— {elapsed}s après démarrage"
                         )
+                        if self._struct_log is not None:
+                            self._struct_log.log_event(EventType.FILTER_CALIBRATED, {
+                                "filtre": nom,
+                                "samples": samples,
+                                "mean": round(s["mean"], 4),
+                                "std": round(s["std"], 4),
+                                "min_samples": min_s,
+                                "z_score": filtre.z_score,
+                                "mean_fond": round(s.get("mean_fond", 0.0), 4),
+                                "std_fond": 0.0,
+                            }, channel=ch)
                     else:
                         progress = min(samples / min_s * 100, 100)
                         log.debug(f"[Watcher] 🔄 [{ch}] {nom} calibration {progress:.0f}% ({samples}/{min_s})")

@@ -107,7 +107,11 @@ class StreamCapture:
 
     def _capturer_segments(self):
         pattern_sortie = str(self._segments_dir / "seg_%Y%m%d_%H%M%S.ts")
-        cmd_streamlink = ["streamlink", "--stdout", "--twitch-disable-ads", self.url_stream, QUALITE_STREAM]
+        cmd_streamlink = [
+            "streamlink", "--stdout", "--twitch-disable-ads",
+            "--retry-streams", "5", "--retry-max", "3", "--stream-timeout", "60",
+            self.url_stream, QUALITE_STREAM,
+        ]
         cmd_ffmpeg = ["ffmpeg", "-i", "pipe:0", "-c", "copy", "-f", "segment", "-segment_time", str(DUREE_SEGMENT_SEC), "-strftime", "1", "-reset_timestamps", "1", pattern_sortie, "-y", "-loglevel", "error"]
 
         logger.info("[StreamCapture] 🔴 Connexion au stream...")
