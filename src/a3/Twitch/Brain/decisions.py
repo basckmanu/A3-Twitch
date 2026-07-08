@@ -107,6 +107,7 @@ class DecisionLogger:
             "decision": None,
             "decision_user": None,
             "decision_timestamp": None,
+            "decision_reason": None,
             "channel": self.channel,
         }
         self._sauvegarder()
@@ -117,18 +118,24 @@ class DecisionLogger:
         clip_num: int,
         decision: str,  # "garder" | "highlight" | "supprimer"
         user: str,
+        reason: str | None = None,
+        user_is_hash: bool = False,
     ) -> None:
-        """Appelé par le Renderer quand un bouton Discord est cliqué."""
+        """Appelé par le Renderer quand un bouton Discord est cliqué.
+
+        `user_is_hash` : True si `user` est déjà pseudonymisé (review reconstruite
+        après un redémarrage depuis pending_reviews.json) — évite un double hash."""
         if clip_num not in self._clips:
             log.warning(f"[Decisions] ⚠️ Clip #{clip_num} introuvable pour logguer la décision")
             return
 
-        user_hash = pseudonymize(user) or "unknown"
+        user_hash = user if user_is_hash else (pseudonymize(user) or "unknown")
         self._clips[clip_num]["decision"] = decision
         self._clips[clip_num]["decision_user"] = user_hash  # pseudonymized
         self._clips[clip_num]["decision_timestamp"] = datetime.now().isoformat()
+        self._clips[clip_num]["decision_reason"] = reason
         self._sauvegarder()
-        log.info(f"[Decisions] ✅ Clip #{clip_num} — {decision} par [hash:{user_hash}] (score: {self._clips[clip_num]['score']:.2f})")
+        log.info(f"[Decisions] ✅ Clip #{clip_num} — {decision} ({reason}) par [hash:{user_hash}] (score: {self._clips[clip_num]['score']:.2f})")
 
     def _sauvegarder(self) -> None:
         temp = self._nom_fichier.with_suffix(".tmp")

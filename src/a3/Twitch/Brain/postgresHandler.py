@@ -270,6 +270,7 @@ class PostgresHandler(DatabaseHandler):
                 latency_ms INT,
                 reaction_time_sec DECIMAL(6,1),
                 is_first_review BOOLEAN DEFAULT TRUE,
+                reason VARCHAR(32),
                 reviewed_at TIMESTAMPTZ DEFAULT NOW()
             )
         """, "reviews")
@@ -426,6 +427,10 @@ class PostgresHandler(DatabaseHandler):
             "ALTER TABLE reviews ADD COLUMN IF NOT EXISTS reaction_time_sec DECIMAL(6,1)",
             "ALTER TABLE reviews ADD COLUMN IF NOT EXISTS is_first_review BOOLEAN DEFAULT TRUE",
             "ALTER TABLE reviews ADD COLUMN IF NOT EXISTS latency_ms INT",
+            # Catégorie choisie par le reviewer (pourquoi garder/highlight/supprimer) —
+            # alimente l'analyse des données (ex: distinguer un faux positif filtre
+            # d'un vrai moment juste pas assez fort).
+            "ALTER TABLE reviews ADD COLUMN IF NOT EXISTS reason VARCHAR(32)",
             "ALTER TABLE reviews DROP COLUMN IF EXISTS user_id",
             "ALTER TABLE reviews DROP COLUMN IF EXISTS channel_id",
             "ALTER TABLE stream_events ADD COLUMN IF NOT EXISTS erreur TEXT",
@@ -974,12 +979,12 @@ class PostgresHandler(DatabaseHandler):
                 insert_sql = """
                     INSERT INTO reviews
                         (clip_id, session_id, action, reviewer_hash,
-                         reaction_time_sec, is_first_review, reviewed_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                         reaction_time_sec, is_first_review, reason, reviewed_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 """
                 self._cursor.execute(insert_sql, (
                     clip_db_id, pk, action, reviewer_hash,
-                    reaction_time, is_first,
+                    reaction_time, is_first, data.get("reason") or None,
                     event.get("timestamp", datetime.now(timezone.utc)),
                 ))
 

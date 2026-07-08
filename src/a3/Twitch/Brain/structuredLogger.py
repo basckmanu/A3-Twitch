@@ -96,7 +96,17 @@ class StructuredLogger:
         logger.log_event(EventType.CLIP_DETECTED, {"clip_num": 1, "score": 0.72})
     """
 
-    def log_review(self, clip_num: int, action: str, user: str, user_id: int = 0, reaction_time_sec: float | None = None, channel: str | None = None) -> None:
+    def log_review(
+        self,
+        clip_num: int,
+        action: str,
+        user: str,
+        user_id: int = 0,
+        reaction_time_sec: float | None = None,
+        channel: str | None = None,
+        reason: str | None = None,
+        user_is_hash: bool = False,
+    ) -> None:
         """Log une review Discord. user_id brut jamais stocké en DB (RGPD).
 
         `channel` doit être le channel d'origine du clip reviewé — cette instance de
@@ -104,9 +114,16 @@ class StructuredLogger:
         paramètre la review serait attribuée à self.channel (le 1er channel démarré ou
         "multi"), et le handler DB (qui route par channel_id → session) la perdrait
         silencieusement.
+
+        `reason` : catégorie choisie par le reviewer (raison de garder/highlight/
+        supprimer) — alimente `reviews.reason` pour l'analyse des données.
+        `user_is_hash` : True si `user` est déjà un hash pseudonymisé (cas d'une
+        review reconstruite depuis pending_reviews.json après un redémarrage, où
+        le nom brut n'a jamais été persisté) — évite de le hasher une seconde fois,
+        ce qui casserait la cohérence du hash reviewer entre les deux chemins.
         """
         from a3.utils.privacy import pseudonymize
-        user_hash = pseudonymize(user) or "unknown"
+        user_hash = (user if user_is_hash else pseudonymize(user)) or "unknown"
         event_map = {
             "garder": EventType.REVIEW_GARDER,
             "highlight": EventType.REVIEW_HIGHLIGHT,
@@ -119,6 +136,7 @@ class StructuredLogger:
             "user": user_hash,
             "user_id": 0,  # jamais d'ID Discord brut en base
             "reaction_time_sec": reaction_time_sec,
+            "reason": reason,
         }, channel=channel)
 
     def __init__(
