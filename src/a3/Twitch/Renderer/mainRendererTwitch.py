@@ -34,6 +34,13 @@ DISCORD_ALLOWED_USERS: set[int] = {
     int(uid.strip()) for uid in os.getenv("DISCORD_ALLOWED_USERS", "").split(",")
     if uid.strip().isdigit()
 }
+if not DISCORD_ALLOWED_USERS:
+    log.warning(
+        "[Renderer] ⚠️ DISCORD_ALLOWED_USERS non configuré — TOUT utilisateur ayant accès "
+        "au salon Discord peut cliquer Garder/Highlight/Supprimer sur les clips. "
+        "Renseigne DISCORD_ALLOWED_USERS (IDs Discord séparés par des virgules) dans .env "
+        "pour restreindre la review aux personnes autorisées."
+    )
 
 FICHIER_BLACKLIST = _BASE / "blacklist_mots.json"
 FICHIER_PENDING = _BASE / "pending_reviews.json"

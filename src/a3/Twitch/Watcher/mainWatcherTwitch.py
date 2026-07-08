@@ -23,6 +23,7 @@ if TYPE_CHECKING:
 log = logging.getLogger("A3")
 
 FENETRE_CHAT_SEC = 60.0  # durée d'agrégation d'une fenêtre chat_windows
+INTERVALLE_SNAPSHOT_SEC = 300.0  # fréquence des snapshots d'état (table `snapshots`)
 
 
 class Watcher:
@@ -45,6 +46,12 @@ class Watcher:
         # Fenêtres de chat agrégées (dataset ML) — une par channel
         self._fenetres: dict[str, dict] = {}
         self._fenetre_task: asyncio.Task | None = None
+        # Accumulateurs pour les snapshots d'état périodiques (table `snapshots`,
+        # dashboard/monitoring — distinct de _fenetres qui alimente le dataset ML
+        # chat_windows toutes les 60s ; ici la cadence est plus large et le
+        # compteur d'auteurs est cumulatif depuis le dernier snapshot)
+        self._snapshots_accum: dict[str, dict] = {}
+        self._snapshot_task: asyncio.Task | None = None
         # Références pour cleanup
         self._clip_activity_filtres: list[FiltreClipActivity] = []
         self._emote_density_filtres: list[FiltreEmoteDensity] = []
@@ -130,6 +137,7 @@ class Watcher:
 
         self._monitor_task = asyncio.create_task(self._surveiller_calibration())
         self._fenetre_task = asyncio.create_task(self._boucle_fenetres())
+        self._snapshot_task = asyncio.create_task(self._boucle_snapshots())
 
     async def handle(self, message) -> None:
         channel_name = message.channel.name if message.channel else None
@@ -145,6 +153,7 @@ class Watcher:
 
         données = await self._collecter(message, channel_name, filtres)
         self._accumuler_fenetre(channel_name or "", données)
+        self._accumuler_snapshot(channel_name or "", données)
         resultat = await brain.analyze(données)
         if resultat is not None:
             fen = self._fenetres.get(channel_name or "")
@@ -285,6 +294,62 @@ class Watcher:
                 )
             self._fenetres[channel_name] = self._nouvelle_fenetre()
 
+    # ── Snapshots d'état périodiques (monitoring/dashboard) ─────────
+
+    def _nouveau_snapshot_accum(self) -> dict:
+        return {
+            "message_count": 0,
+            "auteurs_uniques": set(),
+            "sum_message_rate": 0.0,
+            "sum_emote_density": 0.0,
+        }
+
+    def _accumuler_snapshot(self, channel_name: str, données: dict) -> None:
+        détails = données.get("détails", {})
+        message = données.get("message")
+        auteur = message.author.name if message and message.author else ""
+
+        acc = self._snapshots_accum.setdefault(channel_name, self._nouveau_snapshot_accum())
+        acc["message_count"] += 1
+        if auteur:
+            acc["auteurs_uniques"].add(auteur)
+        acc["sum_message_rate"] += détails.get("FiltreMessageRate", {}).get("score_pondéré", 0.0)
+        acc["sum_emote_density"] += détails.get("FiltreEmoteDensity", {}).get("score_pondéré", 0.0)
+
+    async def _boucle_snapshots(self) -> None:
+        while True:
+            await asyncio.sleep(INTERVALLE_SNAPSHOT_SEC)
+            await self._flush_snapshots()
+
+    async def _flush_snapshots(self) -> None:
+        if self._struct_log is None:
+            return
+        maintenant = datetime.now(timezone.utc)
+
+        for channel_name, brain in self._brains.items():
+            acc = self._snapshots_accum.get(channel_name, self._nouveau_snapshot_accum())
+            n = acc["message_count"] or 1
+
+            scores = [d["score_final"] for d in brain.historique]
+            score_moyen = sum(scores) / len(scores) if scores else 0.0
+
+            filtres_calibres = sorted(self._calibres_par_channel.get(channel_name, set()))
+            filtres_actifs = sorted({f.__class__.__name__ for f in self._filtres_par_channel.get(channel_name, [])})
+
+            self._struct_log.log_snapshot(
+                timestamp_snapshot=maintenant,
+                messages_count=acc["message_count"],
+                auteurs_uniques_count=len(acc["auteurs_uniques"]),
+                clips_count=brain.clips_detectes,
+                score_moyen=score_moyen,
+                message_rate_avg=acc["sum_message_rate"] / n,
+                emote_density_avg=acc["sum_emote_density"] / n,
+                filtres_calibres=filtres_calibres,
+                filtres_actifs=filtres_actifs,
+                channel=channel_name,
+            )
+            self._snapshots_accum[channel_name] = self._nouveau_snapshot_accum()
+
     # ── Monitoring calibration ─────────────────────────────────────
 
     async def _surveiller_calibration(self) -> None:
@@ -354,6 +419,14 @@ class Watcher:
             except asyncio.CancelledError:
                 pass
             await self._flush_fenetres()
+
+        if self._snapshot_task:
+            self._snapshot_task.cancel()
+            try:
+                await self._snapshot_task
+            except asyncio.CancelledError:
+                pass
+            await self._flush_snapshots()
 
         for filtre in self._clip_activity_filtres:
             await filtre.arreter()

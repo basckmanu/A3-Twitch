@@ -366,18 +366,19 @@ class PostgresHandler(DatabaseHandler):
         self._exec_ddl("""
             CREATE TABLE IF NOT EXISTS snapshots (
                 id BIGSERIAL PRIMARY KEY,
-                session_id BIGINT REFERENCES sessions(id),
-                channel_id UUID NOT NULL,
-                timestamp_snapshot TIMESTAMPTZ NOT NULL,
-                messages_count INT DEFAULT 0,
-                auteurs_uniques_count INT DEFAULT 0,
-                clips_count INT DEFAULT 0,
-                score_moyen DECIMAL(5,4),
-                message_rate_avg DECIMAL(10,4),
-                emote_density_avg DECIMAL(10,4),
-                filtres_calibres TEXT[],
-                filtres_actifs TEXT[],
-                data JSONB
+                session_id BIGINT NOT NULL,
+                channel_id UUID NOT NULL REFERENCES channels(id),
+                timestamp TIMESTAMPTZ DEFAULT NOW(),
+                message_count INT DEFAULT 0,
+                unique_authors INT DEFAULT 0,
+                clip_count INT DEFAULT 0,
+                score_avg DOUBLE PRECISION,
+                message_rate_avg DOUBLE PRECISION,
+                emote_density_avg DOUBLE PRECISION,
+                emotion_hype_avg DOUBLE PRECISION,
+                emotion_rage_avg DOUBLE PRECISION,
+                filters_calibrated INT DEFAULT 0,
+                filters_active INT DEFAULT 0
             )
         """, "snapshots")
 
@@ -548,6 +549,10 @@ class PostgresHandler(DatabaseHandler):
             self._cursor.execute(
                 """UPDATE sessions SET status = 'interrupted', ended_at = NOW(),
                        duration_seconds = EXTRACT(EPOCH FROM (NOW() - started_at))::INT,
+                       clips_detected = (SELECT COUNT(*) FROM clips WHERE session_id = sessions.id),
+                       clips_validated = (SELECT COUNT(*) FROM clips WHERE session_id = sessions.id AND decision = 'garder'),
+                       clips_highlighted = (SELECT COUNT(*) FROM clips WHERE session_id = sessions.id AND decision = 'highlight'),
+                       clips_rejected = (SELECT COUNT(*) FROM clips WHERE session_id = sessions.id AND decision IN ('supprimer', 'expire')),
                        avg_viewers = (SELECT ROUND(AVG(cw.viewer_count))::INT FROM chat_windows cw WHERE cw.session_id = sessions.id)
                    WHERE status = 'active'"""
             )
@@ -763,6 +768,8 @@ class PostgresHandler(DatabaseHandler):
                 self._insert_calibration(event, data, session_id, channel_id, channel_name)
             elif event_type == EventType.CHAT_WINDOW:
                 self._insert_chat_window(event, data, session_id, channel_id, channel_name)
+            elif event_type == EventType.SNAPSHOT:
+                self._insert_snapshot(event, data, session_id, channel_id, channel_name)
 
             # Insertion non-bloquante dans stream_events pour tous les events listés
             if event_type in (
@@ -795,6 +802,10 @@ class PostgresHandler(DatabaseHandler):
                     self._cursor.execute(
                         """UPDATE sessions SET status = 'interrupted', ended_at = %s,
                                duration_seconds = EXTRACT(EPOCH FROM (%s - started_at))::INT,
+                               clips_detected = (SELECT COUNT(*) FROM clips WHERE session_id = sessions.id),
+                               clips_validated = (SELECT COUNT(*) FROM clips WHERE session_id = sessions.id AND decision = 'garder'),
+                               clips_highlighted = (SELECT COUNT(*) FROM clips WHERE session_id = sessions.id AND decision = 'highlight'),
+                               clips_rejected = (SELECT COUNT(*) FROM clips WHERE session_id = sessions.id AND decision IN ('supprimer', 'expire')),
                                avg_viewers = (SELECT ROUND(AVG(cw.viewer_count))::INT FROM chat_windows cw WHERE cw.session_id = sessions.id)
                            WHERE channel_id = %s AND status = 'active'""",
                         (event.get("timestamp", datetime.now(timezone.utc)),
@@ -834,13 +845,20 @@ class PostgresHandler(DatabaseHandler):
             return
         try:
             with self._savepoint("update_session_fin"):
+                # clips_validated/highlighted/rejected calculés depuis clips.decision plutôt
+                # que depuis Brain (qui n'a jamais envoyé "clips_gardes" — ces colonnes
+                # restaient donc à 0 en permanence). Les reviews Discord arrivent de toute
+                # façon de façon asynchrone, parfois après la fin de la session — ce recalcul
+                # à la fermeture reflète l'état réel des décisions à cet instant, contrairement
+                # au compteur de Brain qui ne peut connaître les reviews humaines.
                 update_sql = """
                     UPDATE sessions SET
                         ended_at = %s,
                         duration_seconds = %s,
                         clips_detected = %s,
-                        clips_validated = %s,
-                        clips_rejected = %s,
+                        clips_validated = (SELECT COUNT(*) FROM clips WHERE session_id = sessions.id AND decision = 'garder'),
+                        clips_highlighted = (SELECT COUNT(*) FROM clips WHERE session_id = sessions.id AND decision = 'highlight'),
+                        clips_rejected = (SELECT COUNT(*) FROM clips WHERE session_id = sessions.id AND decision IN ('supprimer', 'expire')),
                         score_avg = %s,
                         score_max = %s,
                         avg_viewers = (SELECT ROUND(AVG(cw.viewer_count))::INT FROM chat_windows cw WHERE cw.session_id = sessions.id),
@@ -851,8 +869,6 @@ class PostgresHandler(DatabaseHandler):
                     event.get("timestamp", datetime.now(timezone.utc)),
                     data.get("duree_session_sec", 0),
                     data.get("clips_detectes", 0),
-                    data.get("clips_gardes", 0),
-                    data.get("clips_rejetes", 0),
                     data.get("score_moyen", 0),
                     data.get("score_max", 0),
                     pk,
@@ -1101,6 +1117,38 @@ class PostgresHandler(DatabaseHandler):
         except Exception:
             import traceback
             log.error(f"[PostgresHandler] ❌ _insert_chat_window ÉCHEC\n{traceback.format_exc()}")
+
+    def _insert_snapshot(self, event: dict, data: dict, session_id: str, channel_id: str | None, channel_name: str) -> None:
+        """Insère un instantané périodique de l'état d'un channel (monitoring/dashboard)."""
+        pk = self._session_pks.get(channel_name)
+        if pk is None:
+            return
+        try:
+            with self._savepoint("insert_snapshot"):
+                insert_sql = """
+                    INSERT INTO snapshots (
+                        session_id, channel_id, timestamp,
+                        message_count, unique_authors, clip_count,
+                        score_avg, message_rate_avg, emote_density_avg,
+                        filters_calibrated, filters_active
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """
+                self._cursor.execute(insert_sql, (
+                    pk,
+                    channel_id if channel_id else None,
+                    data.get("timestamp_snapshot", event.get("timestamp", datetime.now(timezone.utc))),
+                    data.get("messages_count", 0),
+                    data.get("auteurs_uniques_count", 0),
+                    data.get("clips_count", 0),
+                    data.get("score_moyen", 0),
+                    data.get("message_rate_avg", 0.0),
+                    data.get("emote_density_avg", 0.0),
+                    data.get("filtres_calibres_count", 0),
+                    data.get("filtres_actifs_count", 0),
+                ))
+        except Exception:
+            import traceback
+            log.error(f"[PostgresHandler] ❌ _insert_snapshot ÉCHEC\n{traceback.format_exc()}")
 
     def _update_clip_generated(self, event: dict, data: dict, session_id: str, channel_id: str | None, channel_name: str) -> None:
         """Met à jour le clip avec le chemin fichier généré et sa durée."""

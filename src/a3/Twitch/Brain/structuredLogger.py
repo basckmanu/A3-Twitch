@@ -31,6 +31,9 @@ class EventType:
     # Chat aggregation (dataset ML)
     CHAT_WINDOW = "chat_window"
 
+    # État périodique (monitoring/dashboard)
+    SNAPSHOT = "snapshot"
+
     # Clip lifecycle
     CLIP_DETECTED = "clip_detected"
     CLIP_MERGED = "clip_merged"
@@ -312,6 +315,40 @@ class StructuredLogger:
             "clip_num": clip_num,
             "viewer_count": viewer_count,
             "game_category": game_category,
+        }, channel=channel)
+
+    def log_snapshot(
+        self,
+        timestamp_snapshot: datetime,
+        messages_count: int,
+        auteurs_uniques_count: int,
+        clips_count: int,
+        score_moyen: float,
+        message_rate_avg: float,
+        emote_density_avg: float,
+        filtres_calibres: list[str],
+        filtres_actifs: list[str],
+        channel: str | None = None,
+    ) -> None:
+        """Log un instantané périodique de l'état d'un channel (table `snapshots`)
+        — pensé pour un dashboard de monitoring, distinct du dataset ML chat_windows.
+
+        La table `snapshots` déployée en base stocke filters_calibrated/filters_active
+        comme des compteurs (INT) — les listes complètes de noms de filtres sont
+        conservées telles quelles dans le JSONL pour le détail, au cas où utile."""
+        self.log_event(EventType.SNAPSHOT, {
+            "channel": channel or self.channel,
+            "timestamp_snapshot": timestamp_snapshot.isoformat(),
+            "messages_count": messages_count,
+            "auteurs_uniques_count": auteurs_uniques_count,
+            "clips_count": clips_count,
+            "score_moyen": round(score_moyen, 4),
+            "message_rate_avg": round(message_rate_avg, 4),
+            "emote_density_avg": round(emote_density_avg, 4),
+            "filtres_calibres": filtres_calibres,
+            "filtres_actifs": filtres_actifs,
+            "filtres_calibres_count": len(filtres_calibres),
+            "filtres_actifs_count": len(filtres_actifs),
         }, channel=channel)
 
     def log_error(self, component: str, erreur: str, contexte: dict | None = None, channel: str | None = None) -> None:
