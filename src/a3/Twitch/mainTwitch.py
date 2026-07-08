@@ -1,5 +1,6 @@
 # src/a3/Twitch/mainTwitch.py
 
+import asyncio
 import logging
 from datetime import datetime
 from pathlib import Path
@@ -49,21 +50,26 @@ class TwitchBot(commands.Bot):
         super().__init__(token=TOKEN, prefix="?", initial_channels=channels)
 
         self.log = logger
-        self.decision_logger = DecisionLogger()
+
+        # Un DecisionLogger par channel — évite les collisions de clip_num entre streams
+        # simultanés (chaque channel numérote ses clips indépendamment à partir de 1)
+        self._decision_loggers: dict[str, DecisionLogger] = {ch: DecisionLogger(channel=ch) for ch in channels}
 
         # Une seule instance de StructuredLogger partagée par tous les Brain et le Renderer
-        struct_log = StructuredLogger(channel=CHANNELS[0] if CHANNELS else "unknown")
+        struct_log_channel = channels[0] if len(channels) == 1 else "multi"
+        struct_log = StructuredLogger(channel=struct_log_channel or "unknown")
+        self._struct_log = struct_log
 
         # Un StreamCapture et un Brain par channel surveillé — tous partagent le même StructuredLogger
         self._captures: dict[str, StreamCapture] = {ch: StreamCapture(channel=ch) for ch in channels}
         self._brains: dict[str, Brain] = {
-            ch: Brain(logger=logger, decision_logger=self.decision_logger, channel=ch, structured_logger=struct_log)
+            ch: Brain(logger=logger, decision_logger=self._decision_loggers[ch], channel=ch, structured_logger=struct_log)
             for ch in channels
         }
 
         self.renderer = Renderer(
             channel=channels[0] if channels else "unknown",
-            decision_logger=self.decision_logger,
+            decision_loggers=self._decision_loggers,
             struct_log=struct_log,
         )
         self.watcher = Watcher(struct_log=struct_log)
@@ -73,7 +79,8 @@ class TwitchBot(commands.Bot):
         self.log.info(f"👀 BOT ACTIVÉ : {len(self._captures)} channel(s) → {channels_str}")
         self.log.info("-" * 50)
 
-        self.decision_logger._start_cleanup()
+        for decision_logger in self._decision_loggers.values():
+            decision_logger._start_cleanup()
 
         for ch, capture in self._captures.items():
             await capture.demarrer()
@@ -92,11 +99,24 @@ class TwitchBot(commands.Bot):
 
     async def close(self) -> None:
         await self.watcher.arreter()
-        for capture in self._captures.values():
-            await capture.arreter()
-        for brain in self._brains.values():
-            await brain.stop()
+        # Arrêt en parallèle — sinon la durée totale est la somme de chaque channel
+        # (ex : 3 streams en plein milieu d'une génération de clip = 3x l'attente)
+        # au lieu du max.
+        await asyncio.gather(*(capture.arreter() for capture in self._captures.values()), return_exceptions=True)
+        await asyncio.gather(*(brain.stop() for brain in self._brains.values()), return_exceptions=True)
         await self.renderer.stop()
+
+        # Sans ce close(), le SESSION_STOP loggé par brain.stop() ci-dessus (et tout
+        # event encore en file) reste dans la queue en mémoire : le worker thread du
+        # DatabaseHandler est daemon, donc tué instantanément à la sortie du process
+        # sans avoir eu la chance de l'écrire. Résultat observé en base : la quasi-
+        # totalité des sessions restent 'interrupted' (jamais 'ended'), avec
+        # score_avg/clips_detected/duration_seconds jamais renseignés.
+        try:
+            self._struct_log.close()
+        except Exception as e:
+            self.log.warning(f"⚠️ Fermeture du StructuredLogger échouée : {e}")
+
         await super().close()
 
 

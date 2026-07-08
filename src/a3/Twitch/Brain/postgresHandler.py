@@ -11,6 +11,7 @@ import logging
 import os
 import queue
 import threading
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any
 
@@ -127,6 +128,29 @@ class PostgresHandler(DatabaseHandler):
             log.debug(f"[PostgresHandler] ⚠️ {label or sql[:60]} ignoré: {e}")
             return False
 
+    @contextmanager
+    def _savepoint(self, label: str = ""):
+        """Isole un groupe de statements dans un savepoint dédié à l'event en cours.
+
+        Sans ça, un échec dans un insert « principal » (session/clip/review/...) laisse
+        la transaction de l'event dans un état aborted — tout ce qui suit dans le même
+        _inserer_event (filter_events, stream_events...) échoue en cascade avec
+        InFailedSqlTransaction, et cet échec en cascade est totalement invisible à
+        _insert_batch (aucune exception ne remonte), donc l'event entier est perdu sans
+        aucune trace ni retry. Ce savepoint garantit qu'un échec reste local à sa propre
+        insertion."""
+        sp = "_evt"
+        self._cursor.execute(f"SAVEPOINT {sp}")
+        try:
+            yield
+            self._cursor.execute(f"RELEASE SAVEPOINT {sp}")
+        except Exception:
+            try:
+                self._cursor.execute(f"ROLLBACK TO SAVEPOINT {sp}")
+            except Exception:
+                pass
+            raise
+
     def _creer_tables(self) -> None:
         """Crée toutes les tables + migrations. Privacy-by-design : aucune donnée personnelle brute."""
         if self._tables_created:
@@ -212,7 +236,7 @@ class PostgresHandler(DatabaseHandler):
 
                 viewer_count INT,
                 game_category VARCHAR(128),
-                stream_language CHAR(2),
+                stream_language VARCHAR(10),
 
                 detected_at TIMESTAMPTZ NOT NULL,
                 created_at TIMESTAMPTZ DEFAULT NOW(),
@@ -374,6 +398,7 @@ class PostgresHandler(DatabaseHandler):
             ("CREATE INDEX IF NOT EXISTS idx_chat_windows_session ON chat_windows(session_id)", "idx_chat_windows_session"),
             ("CREATE INDEX IF NOT EXISTS idx_chat_windows_start ON chat_windows(window_start)", "idx_chat_windows_start"),
             ("CREATE UNIQUE INDEX IF NOT EXISTS uq_clips_session_num ON clips(session_id, clip_num)", "uq_clips_session_num"),
+            ("CREATE UNIQUE INDEX IF NOT EXISTS uq_filter_performance_session_filter ON filter_performance(session_id, filter_name)", "uq_filter_performance_session_filter"),
         ]:
             self._exec_ddl(sql, label)
 
@@ -387,7 +412,11 @@ class PostgresHandler(DatabaseHandler):
             "ALTER TABLE clips ADD COLUMN IF NOT EXISTS model_version_id INT REFERENCES model_versions(id)",
             "ALTER TABLE clips ADD COLUMN IF NOT EXISTS viewer_count INT",
             "ALTER TABLE clips ADD COLUMN IF NOT EXISTS game_category VARCHAR(128)",
-            "ALTER TABLE clips ADD COLUMN IF NOT EXISTS stream_language CHAR(2)",
+            "ALTER TABLE clips ADD COLUMN IF NOT EXISTS stream_language VARCHAR(10)",
+            # Twitch Helix peut renvoyer "language": "other" (5 caractères) — CHAR(2)
+            # faisait échouer l'INSERT du clip (StringDataRightTruncation) à chaque
+            # fois qu'un streamer a sélectionné "Other" comme langue.
+            "ALTER TABLE clips ALTER COLUMN stream_language TYPE VARCHAR(10)",
             "ALTER TABLE clips ADD COLUMN IF NOT EXISTS score_components JSONB",
             "ALTER TABLE clips ADD COLUMN IF NOT EXISTS ml_features JSONB",
             "ALTER TABLE clips ADD COLUMN IF NOT EXISTS ai_confidence FLOAT",
@@ -452,6 +481,7 @@ class PostgresHandler(DatabaseHandler):
             self._tables_created = True
             log.info("[PostgresHandler] ✅ Tables créées/vérifiées avec succès")
             self._seed_defaults()
+            self._close_orphan_sessions()
         except Exception as e:
             log.error(f"[PostgresHandler] ❌ Commit final échoué : {e}")
             try:
@@ -498,6 +528,34 @@ class PostgresHandler(DatabaseHandler):
             log.debug(f"[PostgresHandler] 🏢 org par défaut : {self._default_org_id}")
         except Exception as e:
             log.debug(f"[PostgresHandler] ⚠️ _seed_defaults : {e}")
+            try:
+                self._db.rollback()
+            except Exception:
+                pass
+
+    def _close_orphan_sessions(self) -> None:
+        """Clôture toute session encore 'active' au démarrage du process.
+
+        Une seule instance du bot tourne à la fois : si une session est encore
+        'active' quand ce process démarre, c'est forcément un reliquat d'un
+        process précédent tué brutalement (crash, kill, extinction machine).
+        Le nettoyage par channel dans _insert_session ne référme ces sessions
+        que si CE channel redémarre — un channel retiré de CHANNELS restait
+        donc actif indéfiniment. Ce nettoyage global, exécuté une fois par
+        démarrage, couvre aussi ce cas.
+        """
+        try:
+            self._cursor.execute(
+                """UPDATE sessions SET status = 'interrupted', ended_at = NOW(),
+                       duration_seconds = EXTRACT(EPOCH FROM (NOW() - started_at))::INT,
+                       avg_viewers = (SELECT ROUND(AVG(cw.viewer_count))::INT FROM chat_windows cw WHERE cw.session_id = sessions.id)
+                   WHERE status = 'active'"""
+            )
+            if self._cursor.rowcount:
+                log.warning(f"[PostgresHandler] 🧹 {self._cursor.rowcount} session(s) 'active' orpheline(s) clôturée(s) au démarrage")
+            self._db.commit()
+        except Exception as e:
+            log.debug(f"[PostgresHandler] ⚠️ _close_orphan_sessions : {e}")
             try:
                 self._db.rollback()
             except Exception:
@@ -699,10 +757,12 @@ class PostgresHandler(DatabaseHandler):
                 self._update_clip_generated(event, data, session_id, channel_id, channel_name)
             elif event_type == EventType.CLIP_MERGED:
                 self._insert_clip_merge(event, data, session_id, channel_id, channel_name)
-            elif event_type in (EventType.REVIEW_GARDER, EventType.REVIEW_HIGHLIGHT, EventType.REVIEW_SUPPRIMER):
+            elif event_type in (EventType.REVIEW_GARDER, EventType.REVIEW_HIGHLIGHT, EventType.REVIEW_SUPPRIMER, EventType.REVIEW_EXPIRE):
                 self._insert_review(event, data, session_id, event_type, channel_id, channel_name)
             elif event_type == EventType.FILTER_CALIBRATED:
                 self._insert_calibration(event, data, session_id, channel_id, channel_name)
+            elif event_type == EventType.CHAT_WINDOW:
+                self._insert_chat_window(event, data, session_id, channel_id, channel_name)
 
             # Insertion non-bloquante dans stream_events pour tous les events listés
             if event_type in (
@@ -723,41 +783,45 @@ class PostgresHandler(DatabaseHandler):
         """Insère une nouvelle session avec version du modèle et organisation."""
         log.info(f"[PostgresHandler] 🚀 _insert_session — channel={channel_name!r}  channel_id={channel_id!r}")
         try:
-            version_id = self._get_or_create_model_version(data)
-            if version_id:
-                self._model_version_ids[channel_name] = version_id
+            with self._savepoint("insert_session"):
+                version_id = self._get_or_create_model_version(data)
+                if version_id:
+                    self._model_version_ids[channel_name] = version_id
 
-            # Une session 'active' encore ouverte pour ce channel n'a pu l'être que
-            # suite à un arrêt non-propre (crash / kill) du process précédent — on la
-            # clôture pour ne pas accumuler des sessions zombies indéfiniment.
-            if channel_id:
-                self._cursor.execute(
-                    """UPDATE sessions SET status = 'interrupted', ended_at = %s
-                       WHERE channel_id = %s AND status = 'active'""",
-                    (event.get("timestamp", datetime.now(timezone.utc)), channel_id),
-                )
-                if self._cursor.rowcount:
-                    log.warning(f"[PostgresHandler] ⚠️ {self._cursor.rowcount} session(s) 'active' zombie(s) clôturée(s) pour channel={channel_name!r}")
+                # Une session 'active' encore ouverte pour ce channel n'a pu l'être que
+                # suite à un arrêt non-propre (crash / kill) du process précédent — on la
+                # clôture pour ne pas accumuler des sessions zombies indéfiniment.
+                if channel_id:
+                    self._cursor.execute(
+                        """UPDATE sessions SET status = 'interrupted', ended_at = %s,
+                               duration_seconds = EXTRACT(EPOCH FROM (%s - started_at))::INT,
+                               avg_viewers = (SELECT ROUND(AVG(cw.viewer_count))::INT FROM chat_windows cw WHERE cw.session_id = sessions.id)
+                           WHERE channel_id = %s AND status = 'active'""",
+                        (event.get("timestamp", datetime.now(timezone.utc)),
+                         event.get("timestamp", datetime.now(timezone.utc)), channel_id),
+                    )
+                    if self._cursor.rowcount:
+                        log.warning(f"[PostgresHandler] ⚠️ {self._cursor.rowcount} session(s) 'active' zombie(s) clôturée(s) pour channel={channel_name!r}")
 
-            insert_sql = """
-                INSERT INTO sessions (channel_id, org_id, model_version_id, started_at, status, version)
-                VALUES (%s, %s, %s, %s, 'active', %s)
-                RETURNING id
-            """
-            self._cursor.execute(insert_sql, (
-                channel_id if channel_id else None,
-                self._default_org_id or None,
-                version_id,
-                event.get("timestamp", datetime.now(timezone.utc)),
-                data.get("version_app", "1.0.0"),
-            ))
-            row = self._cursor.fetchone()
-            if row:
-                pk = row[0]
-                self._session_pks[channel_name] = pk
-                log.info(f"[PostgresHandler] ✅ INSERT sessions OK — id={pk}  version_id={version_id}")
-            else:
-                log.error(f"[PostgresHandler] ❌ _insert_session — fetchone() None pour channel={channel_name!r}")
+                insert_sql = """
+                    INSERT INTO sessions (channel_id, org_id, model_version_id, started_at, status, version)
+                    VALUES (%s, %s, %s, %s, 'active', %s)
+                    RETURNING id
+                """
+                self._cursor.execute(insert_sql, (
+                    channel_id if channel_id else None,
+                    self._default_org_id or None,
+                    version_id,
+                    event.get("timestamp", datetime.now(timezone.utc)),
+                    data.get("version_app", "1.0.0"),
+                ))
+                row = self._cursor.fetchone()
+                if row:
+                    pk = row[0]
+                    self._session_pks[channel_name] = pk
+                    log.info(f"[PostgresHandler] ✅ INSERT sessions OK — id={pk}  version_id={version_id}")
+                else:
+                    log.error(f"[PostgresHandler] ❌ _insert_session — fetchone() None pour channel={channel_name!r}")
         except Exception:
             import traceback
             log.error(f"[PostgresHandler] ❌ _insert_session ÉCHEC — channel={channel_name!r}\n{traceback.format_exc()}")
@@ -769,28 +833,30 @@ class PostgresHandler(DatabaseHandler):
             log.warning(f"[PostgresHandler] ⚠️ _update_session_fin — pk None pour channel_name={channel_name!r}, ignoré")
             return
         try:
-            update_sql = """
-                UPDATE sessions SET
-                    ended_at = %s,
-                    duration_seconds = %s,
-                    clips_detected = %s,
-                    clips_validated = %s,
-                    clips_rejected = %s,
-                    score_avg = %s,
-                    score_max = %s,
-                    status = 'ended'
-                WHERE id = %s
-            """
-            self._cursor.execute(update_sql, (
-                event.get("timestamp", datetime.now(timezone.utc)),
-                data.get("duree_session_sec", 0),
-                data.get("clips_detectes", 0),
-                data.get("clips_gardes", 0),
-                data.get("clips_rejetes", 0),
-                data.get("score_moyen", 0),
-                data.get("score_max", 0),
-                pk,
-            ))
+            with self._savepoint("update_session_fin"):
+                update_sql = """
+                    UPDATE sessions SET
+                        ended_at = %s,
+                        duration_seconds = %s,
+                        clips_detected = %s,
+                        clips_validated = %s,
+                        clips_rejected = %s,
+                        score_avg = %s,
+                        score_max = %s,
+                        avg_viewers = (SELECT ROUND(AVG(cw.viewer_count))::INT FROM chat_windows cw WHERE cw.session_id = sessions.id),
+                        status = 'ended'
+                    WHERE id = %s
+                """
+                self._cursor.execute(update_sql, (
+                    event.get("timestamp", datetime.now(timezone.utc)),
+                    data.get("duree_session_sec", 0),
+                    data.get("clips_detectes", 0),
+                    data.get("clips_gardes", 0),
+                    data.get("clips_rejetes", 0),
+                    data.get("score_moyen", 0),
+                    data.get("score_max", 0),
+                    pk,
+                ))
         except Exception:
             import traceback
             log.error(f"[PostgresHandler] ❌ _update_session_fin ÉCHEC\n{traceback.format_exc()}")
@@ -802,33 +868,34 @@ class PostgresHandler(DatabaseHandler):
             log.warning(f"[PostgresHandler] ⚠️ _insert_clip — pk None pour channel_name={channel_name!r}, ignoré")
             return
         try:
-            version_id = self._model_version_ids.get(channel_name)
-            filtres = data.get("filtres") or {}
-            insert_sql = """
-                INSERT INTO clips (
-                    session_id, clip_num, channel_id, model_version_id,
-                    score_final, score_components, trigger_author_hash, repetition_word, detected_at,
-                    viewer_count, game_category, stream_language
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (session_id, clip_num) DO UPDATE SET
-                    score_final = GREATEST(clips.score_final, EXCLUDED.score_final),
-                    score_components = EXCLUDED.score_components,
-                    detected_at = EXCLUDED.detected_at
-            """
-            self._cursor.execute(insert_sql, (
-                pk,
-                data.get("clip_num"),
-                channel_id if channel_id else None,
-                version_id,
-                data.get("score", 0),
-                self._psycopg2_extras.Json(filtres) if filtres else None,
-                data.get("auteur") or None,
-                data.get("repetition_word") or None,
-                event.get("timestamp", datetime.now(timezone.utc)),
-                data.get("viewer_count") or None,
-                data.get("game_category") or None,
-                data.get("stream_language") or None,
-            ))
+            with self._savepoint("insert_clip"):
+                version_id = self._model_version_ids.get(channel_name)
+                filtres = data.get("filtres") or {}
+                insert_sql = """
+                    INSERT INTO clips (
+                        session_id, clip_num, channel_id, model_version_id,
+                        score_final, score_components, trigger_author_hash, repetition_word, detected_at,
+                        viewer_count, game_category, stream_language
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (session_id, clip_num) DO UPDATE SET
+                        score_final = GREATEST(clips.score_final, EXCLUDED.score_final),
+                        score_components = EXCLUDED.score_components,
+                        detected_at = EXCLUDED.detected_at
+                """
+                self._cursor.execute(insert_sql, (
+                    pk,
+                    data.get("clip_num"),
+                    channel_id if channel_id else None,
+                    version_id,
+                    data.get("score", 0),
+                    self._psycopg2_extras.Json(filtres) if filtres else None,
+                    data.get("auteur") or None,
+                    data.get("repetition_word") or None,
+                    event.get("timestamp", datetime.now(timezone.utc)),
+                    data.get("viewer_count") or None,
+                    data.get("game_category") or None,
+                    data.get("stream_language") or None,
+                ))
         except Exception:
             import traceback
             log.error(f"[PostgresHandler] ❌ _insert_clip ÉCHEC\n{traceback.format_exc()}")
@@ -840,25 +907,45 @@ class PostgresHandler(DatabaseHandler):
             log.warning(f"[PostgresHandler] ⚠️ _insert_review — pk None pour channel={channel_name!r}, ignoré")
             return
         try:
-            action_map = {
-                EventType.REVIEW_GARDER: "garder",
-                EventType.REVIEW_HIGHLIGHT: "highlight",
-                EventType.REVIEW_SUPPRIMER: "supprimer",
-            }
-            action = action_map.get(event_type, "")
-            reviewer_hash = pseudonymize(data.get("user", "")) or "unknown"
-            reaction_time = data.get("reaction_time_sec") or None
+            with self._savepoint("insert_review"):
+                action_map = {
+                    EventType.REVIEW_GARDER: "garder",
+                    EventType.REVIEW_HIGHLIGHT: "highlight",
+                    EventType.REVIEW_SUPPRIMER: "supprimer",
+                    EventType.REVIEW_EXPIRE: "expire",
+                }
+                action = action_map.get(event_type, "")
+                reviewer_hash = pseudonymize(data.get("user", "")) or "unknown"
+                reaction_time = data.get("reaction_time_sec") or None
 
-            self._cursor.execute(
-                "SELECT id FROM clips WHERE session_id = %s AND clip_num = %s ORDER BY detected_at DESC LIMIT 1",
-                (pk, data.get("clip_num")),
-            )
-            row = self._cursor.fetchone()
-            clip_db_id = row[0] if row else None
+                self._cursor.execute(
+                    "SELECT id FROM clips WHERE session_id = %s AND clip_num = %s ORDER BY detected_at DESC LIMIT 1",
+                    (pk, data.get("clip_num")),
+                )
+                row = self._cursor.fetchone()
+                clip_db_id = row[0] if row else None
 
-            # Première review de ce reviewer sur ce clip ?
-            is_first = True
-            if clip_db_id is not None:
+                # reviews.clip_id est NOT NULL — si le clip n'existe pas pour CETTE session
+                # (ex: review Discord cliquée sur un clip généré avant un redémarrage du bot,
+                # donc rattaché à une session PK différente), impossible d'insérer la review.
+                if clip_db_id is None:
+                    log.warning(
+                        f"[PostgresHandler] ⚠️ _insert_review — clip_num={data.get('clip_num')!r} introuvable "
+                        f"pour session={pk!r} (channel={channel_name!r}), review ignorée"
+                    )
+                    return
+
+                # Décision déjà existante ? Sert à n'alimenter filter_performance qu'une
+                # seule fois par clip (sur son tout premier verdict) — un reviewer qui se
+                # ravise plus tard ne doit pas compter une deuxième fois les mêmes filtres.
+                self._cursor.execute(
+                    "SELECT decision, score_components, model_version_id FROM clips WHERE id = %s",
+                    (clip_db_id,),
+                )
+                clip_row = self._cursor.fetchone()
+                decision_precedente, score_components, model_version_id = clip_row if clip_row else (None, None, None)
+
+                # Première review de ce reviewer sur ce clip ?
                 self._cursor.execute(
                     "SELECT COUNT(*) FROM reviews WHERE clip_id = %s AND reviewer_hash = %s",
                     (clip_db_id, reviewer_hash),
@@ -866,38 +953,71 @@ class PostgresHandler(DatabaseHandler):
                 count_row = self._cursor.fetchone()
                 is_first = (count_row[0] == 0) if count_row else True
 
-            self._ensure_user(reviewer_hash)
+                self._ensure_user(reviewer_hash)
 
-            insert_sql = """
-                INSERT INTO reviews
-                    (clip_id, session_id, action, reviewer_hash,
-                     reaction_time_sec, is_first_review, reviewed_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
-            """
-            self._cursor.execute(insert_sql, (
-                clip_db_id, pk, action, reviewer_hash,
-                reaction_time, is_first,
-                event.get("timestamp", datetime.now(timezone.utc)),
-            ))
+                insert_sql = """
+                    INSERT INTO reviews
+                        (clip_id, session_id, action, reviewer_hash,
+                         reaction_time_sec, is_first_review, reviewed_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                """
+                self._cursor.execute(insert_sql, (
+                    clip_db_id, pk, action, reviewer_hash,
+                    reaction_time, is_first,
+                    event.get("timestamp", datetime.now(timezone.utc)),
+                ))
 
-            # Décision sur le clip — toujours la dernière action en date (un reviewer
-            # peut se raviser après un premier clic ; is_first_review ne sert qu'aux
-            # statistiques de réactivité, pas à figer la décision sur le 1er clic)
-            if clip_db_id is not None:
+                # Décision sur le clip — toujours la dernière action en date (un reviewer
+                # peut se raviser après un premier clic ; is_first_review ne sert qu'aux
+                # statistiques de réactivité, pas à figer la décision sur le 1er clic)
                 self._cursor.execute(
                     "UPDATE clips SET decision = %s, reviewed_at = %s, reviewer_hash = %s WHERE id = %s",
                     (action, event.get("timestamp", datetime.now(timezone.utc)), reviewer_hash, clip_db_id),
                 )
 
-            # Propager le label sur chat_windows liées à ce clip
-            if clip_db_id is not None:
+                # Propager le label sur chat_windows liées à ce clip
                 self._cursor.execute(
                     "UPDATE chat_windows SET label = %s WHERE triggered_clip_id = %s AND label IS NULL",
                     (action, clip_db_id),
                 )
+
+                if decision_precedente is None:
+                    self._maj_filter_performance(pk, channel_id, model_version_id, score_components, action)
         except Exception:
             import traceback
             log.error(f"[PostgresHandler] ❌ _insert_review ÉCHEC\n{traceback.format_exc()}")
+
+    def _maj_filter_performance(
+        self,
+        session_pk: int,
+        channel_id: str | None,
+        model_version_id: int | None,
+        score_components: dict | None,
+        action: str,
+    ) -> None:
+        """Alimente filter_performance : pour chaque filtre ayant contribué au score
+        de ce clip, incrémente trigger_count, et true_positive_count si le clip a
+        été gardé/highlighté — le signal nécessaire pour retuner POIDS_FILTRES."""
+        if not score_components:
+            return
+        est_positif = action in ("garder", "highlight")
+        for filtre_name, score in score_components.items():
+            try:
+                score_val = float(score)
+            except (TypeError, ValueError):
+                continue
+            if score_val <= 0:
+                continue
+            self._exec_safe(
+                """INSERT INTO filter_performance
+                    (session_id, model_version_id, channel_id, filter_name, trigger_count, true_positive_count)
+                   VALUES (%s, %s, %s, %s, 1, %s)
+                   ON CONFLICT (session_id, filter_name) DO UPDATE SET
+                       trigger_count = filter_performance.trigger_count + 1,
+                       true_positive_count = filter_performance.true_positive_count + EXCLUDED.true_positive_count""",
+                (session_pk, model_version_id, channel_id, filtre_name, 1 if est_positif else 0),
+                "filter_performance upsert",
+            )
 
     def _insert_calibration(self, event: dict, data: dict, session_id: str, channel_id: str | None, channel_name: str) -> None:
         """Insère les stats de calibration d'un filtre."""
@@ -905,33 +1025,82 @@ class PostgresHandler(DatabaseHandler):
         if pk is None:
             return
         try:
-            insert_sql = """
-                INSERT INTO calibration (session_id, channel_id, filtre_nom, est_calibre, samples_count, timestamp_calibration, mean, std, min_samples_required, z_score_threshold, mean_fond, std_fond)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (session_id, filtre_nom) DO UPDATE SET
-                    est_calibre = EXCLUDED.est_calibre,
-                    samples_count = EXCLUDED.samples_count,
-                    timestamp_calibration = EXCLUDED.timestamp_calibration,
-                    mean = EXCLUDED.mean,
-                    std = EXCLUDED.std
-            """
-            self._cursor.execute(insert_sql, (
-                pk,
-                channel_id if channel_id else None,
-                data.get("filtre") or data.get("filtre_name") or "",
-                True,
-                data.get("samples", 0),
-                event.get("timestamp", datetime.now(timezone.utc)),
-                data.get("mean", 0),
-                data.get("std", 0),
-                data.get("min_samples", 50),
-                data.get("z_score", 1.8),
-                data.get("mean_fond", 0),
-                data.get("std_fond", 0),
-            ))
+            with self._savepoint("insert_calibration"):
+                insert_sql = """
+                    INSERT INTO calibration (session_id, channel_id, filtre_nom, est_calibre, samples_count, timestamp_calibration, mean, std, min_samples_required, z_score_threshold, mean_fond, std_fond)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (session_id, filtre_nom) DO UPDATE SET
+                        est_calibre = EXCLUDED.est_calibre,
+                        samples_count = EXCLUDED.samples_count,
+                        timestamp_calibration = EXCLUDED.timestamp_calibration,
+                        mean = EXCLUDED.mean,
+                        std = EXCLUDED.std
+                """
+                self._cursor.execute(insert_sql, (
+                    pk,
+                    channel_id if channel_id else None,
+                    data.get("filtre") or data.get("filtre_name") or "",
+                    True,
+                    data.get("samples", 0),
+                    event.get("timestamp", datetime.now(timezone.utc)),
+                    data.get("mean", 0),
+                    data.get("std", 0),
+                    data.get("min_samples", 50),
+                    data.get("z_score", 1.8),
+                    data.get("mean_fond", 0),
+                    data.get("std_fond", 0),
+                ))
         except Exception:
             import traceback
             log.error(f"[PostgresHandler] ❌ _insert_calibration ÉCHEC\n{traceback.format_exc()}")
+
+    def _insert_chat_window(self, event: dict, data: dict, session_id: str, channel_id: str | None, channel_name: str) -> None:
+        """Insère une fenêtre de chat agrégée (dataset ML). Si un clip a été
+        déclenché pendant la fenêtre, la relie via triggered_clip_id — le label
+        (garder/highlight/supprimer) sera propagé automatiquement par _insert_review
+        une fois le clip reviewé sur Discord."""
+        pk = self._session_pks.get(channel_name)
+        if pk is None:
+            return
+        try:
+            with self._savepoint("insert_chat_window"):
+                triggered_clip_id = None
+                clip_num = data.get("clip_num")
+                if clip_num:
+                    self._cursor.execute(
+                        "SELECT id FROM clips WHERE session_id = %s AND clip_num = %s ORDER BY detected_at DESC LIMIT 1",
+                        (pk, clip_num),
+                    )
+                    row = self._cursor.fetchone()
+                    triggered_clip_id = row[0] if row else None
+
+                insert_sql = """
+                    INSERT INTO chat_windows (
+                        session_id, channel_id, window_start, window_end,
+                        message_count, unique_authors_count, message_rate_avg,
+                        emote_density_avg, emotion_score_avg, repetition_score_avg,
+                        clip_activity_score, viewer_count, game_category, triggered_clip_id
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """
+                self._cursor.execute(insert_sql, (
+                    pk,
+                    channel_id if channel_id else None,
+                    data.get("window_start"),
+                    data.get("window_end"),
+                    data.get("message_count", 0),
+                    data.get("unique_authors_count", 0),
+                    data.get("message_rate_avg", 0.0),
+                    data.get("emote_density_avg", 0.0),
+                    data.get("emotion_score_avg", 0.0),
+                    data.get("repetition_score_avg", 0.0),
+                    data.get("clip_activity_score", 0.0),
+                    data.get("viewer_count") or None,
+                    data.get("game_category") or None,
+                    triggered_clip_id,
+                ))
+        except Exception:
+            import traceback
+            log.error(f"[PostgresHandler] ❌ _insert_chat_window ÉCHEC\n{traceback.format_exc()}")
 
     def _update_clip_generated(self, event: dict, data: dict, session_id: str, channel_id: str | None, channel_name: str) -> None:
         """Met à jour le clip avec le chemin fichier généré et sa durée."""
@@ -939,16 +1108,17 @@ class PostgresHandler(DatabaseHandler):
         if pk is None:
             return
         try:
-            self._cursor.execute(
-                """UPDATE clips SET file_path_hq = %s, duration_seconds = %s
-                   WHERE session_id = %s AND clip_num = %s""",
-                (
-                    data.get("chemin"),
-                    data.get("duree_sec"),
-                    pk,
-                    data.get("clip_num"),
-                ),
-            )
+            with self._savepoint("update_clip_generated"):
+                self._cursor.execute(
+                    """UPDATE clips SET file_path_hq = %s, duration_seconds = %s
+                       WHERE session_id = %s AND clip_num = %s""",
+                    (
+                        data.get("chemin"),
+                        data.get("duree_sec"),
+                        pk,
+                        data.get("clip_num"),
+                    ),
+                )
         except Exception:
             import traceback
             log.error(f"[PostgresHandler] ❌ _update_clip_generated ÉCHEC\n{traceback.format_exc()}")
@@ -959,16 +1129,17 @@ class PostgresHandler(DatabaseHandler):
         if pk is None:
             return
         try:
-            update_sql = """
-                UPDATE clips SET
-                    score_final = GREATEST(score_final, %s)
-                WHERE clip_num = %s AND session_id = %s
-            """
-            self._cursor.execute(update_sql, (
-                data.get("score", 0),
-                data.get("clip_num"),
-                pk,
-            ))
+            with self._savepoint("insert_clip_merge"):
+                update_sql = """
+                    UPDATE clips SET
+                        score_final = GREATEST(score_final, %s)
+                    WHERE clip_num = %s AND session_id = %s
+                """
+                self._cursor.execute(update_sql, (
+                    data.get("score", 0),
+                    data.get("clip_num"),
+                    pk,
+                ))
         except Exception:
             import traceback
             log.error(f"[PostgresHandler] ❌ _insert_clip_merge ÉCHEC\n{traceback.format_exc()}")
@@ -1012,7 +1183,14 @@ class PostgresHandler(DatabaseHandler):
     def close(self) -> None:
         self._closed = True
         if self._worker:
-            self._worker.join(timeout=5.0)
+            # Le worker peut être bloqué jusqu'à _flush_interval dans queue.get()
+            # avant même de revoir le flag _closed — laisser une marge au-delà,
+            # sinon join() rend la main pendant que le worker tourne encore et
+            # le flush() ci-dessous utiliserait le même curseur en concurrence.
+            self._worker.join(timeout=self._flush_interval + 5.0)
+            if self._worker.is_alive():
+                log.warning("[PostgresHandler] ⚠️ Worker thread encore actif après join — flush() ignoré pour éviter l'accès concurrent au curseur")
+                return
         self.flush()
         if self._cursor:
             try:

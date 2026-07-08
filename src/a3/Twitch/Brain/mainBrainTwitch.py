@@ -30,7 +30,7 @@ POIDS_FILTRES: dict[str, float] = {
 }
 
 SEUIL_CLIP: float = 0.42
-FILTRES_VOLUME = {"FiltreMessageRate", "FiltreUniqueAuthors"}
+FILTRES_VOLUME = {"FiltreMessageRate", "FiltreUniqueAuthors", "FiltreClipActivity"}
 DECALAGE_RECORD_AVANT_SEC = 45.0   # combien de secondes avant le trigger on commence à enregistrer
 DUREE_ATTENTE_HYPE_SEC = 15.0      # durée supplémentaire attendue après le dernier pic
 DUREE_MIN_TIKTOK_SEC: float = 65.0
@@ -132,6 +132,9 @@ class Brain:
                 détails_memoire[filtre] = {"score_pondéré": score_filtre}
             else:
                 détails_memoire[filtre] = {"score_pondéré": 0.0}
+        # Évite qu'un score mathématiquement égal au seuil (ex: 0.2+0.22) soit rejeté
+        # à cause d'un résidu de précision flottante (0.41999999999999998 < 0.42).
+        score_final = round(score_final, 4)
 
         données["détails"] = détails_memoire
         détails = détails_memoire
@@ -200,6 +203,9 @@ class Brain:
                 auteur=auteur_hash,
                 repetition_word=données.get("mot_repetition"),
                 message=message.content[:80] if message else "",
+                viewer_count=données.get("viewer_count"),
+                game_category=données.get("game_category"),
+                stream_language=données.get("stream_language"),
                 channel=self.channel,
             )
 

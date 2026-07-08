@@ -35,7 +35,7 @@ _BASE = _resolve_base()
 BUFFER_DUREE_MAX_SEC = 600
 DUREE_SEGMENT_SEC = 30
 DELAI_CHAT_VIDEO_SEC = 8
-QUALITE_STREAM = "best"
+QUALITE_STREAM = "480p,480p30,360p,360p30"
 
 
 def _channel_dir(channel: str, sub: str) -> Path:
@@ -115,26 +115,36 @@ class StreamCapture:
         cmd_ffmpeg = ["ffmpeg", "-i", "pipe:0", "-c", "copy", "-f", "segment", "-segment_time", str(DUREE_SEGMENT_SEC), "-strftime", "1", "-reset_timestamps", "1", pattern_sortie, "-y", "-loglevel", "error"]
 
         logger.info("[StreamCapture] 🔴 Connexion au stream...")
-        proc_sl = subprocess.Popen(cmd_streamlink, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-        proc_ff = subprocess.Popen(cmd_ffmpeg, stdin=proc_sl.stdout, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        proc_sl.stdout.close()
+        # stderr était envoyé vers DEVNULL — impossible de diagnostiquer les trous de
+        # capture (pubs, coupures réseau, reconnexions HLS). Redirigé vers un fichier par
+        # channel (append, line-buffered) pour pouvoir enquêter après coup.
+        sl_log_path = self._segments_dir / "streamlink.log"
+        ff_log_path = self._segments_dir / "ffmpeg.log"
+        with open(sl_log_path, "a", encoding="utf-8", errors="replace", buffering=1) as sl_log, \
+                open(ff_log_path, "a", encoding="utf-8", errors="replace", buffering=1) as ff_log:
+            proc_sl = subprocess.Popen(cmd_streamlink, stdout=subprocess.PIPE, stderr=sl_log)
+            proc_ff = subprocess.Popen(cmd_ffmpeg, stdin=proc_sl.stdout, stdout=subprocess.DEVNULL, stderr=ff_log)
+            proc_sl.stdout.close()
 
-        while self._actif and proc_ff.poll() is None:
-            time.sleep(1)
+            while self._actif and proc_ff.poll() is None:
+                time.sleep(1)
 
-        if proc_sl.poll() is not None and proc_sl.returncode != 0:
-            logger.warning("[StreamCapture] ⚠️ streamlink a échoué (code=%d), reconnexion dans 20s...", proc_sl.returncode)
-            time.sleep(20)
-        else:
-            # Petit délai avant reconnection pour éviter la boucle serrée
-            time.sleep(5)
-        try:
-            if proc_sl.poll() is None:
-                proc_sl.kill()
-            if proc_ff.poll() is None:
-                proc_ff.kill()
-        except Exception as e:
-            logger.debug(f"[StreamCapture] Processus déjà arrêtés: {e}")
+            if proc_sl.poll() is not None and proc_sl.returncode != 0:
+                logger.warning(
+                    "[StreamCapture] ⚠️ streamlink a échoué (code=%d), reconnexion dans 20s... (détail: %s)",
+                    proc_sl.returncode, sl_log_path,
+                )
+                time.sleep(20)
+            else:
+                # Petit délai avant reconnection pour éviter la boucle serrée
+                time.sleep(5)
+            try:
+                if proc_sl.poll() is None:
+                    proc_sl.kill()
+                if proc_ff.poll() is None:
+                    proc_ff.kill()
+            except Exception as e:
+                logger.debug(f"[StreamCapture] Processus déjà arrêtés: {e}")
 
     async def _surveiller_nouveaux_segments(self):
         vus = set()
@@ -265,6 +275,17 @@ class StreamCapture:
                 return True
             except asyncio.TimeoutError:
                 logger.error(f"[StreamCapture] ⏱️ timeout ffmpeg {label} ({timeout_s}s)")
+                return False
+            except subprocess.TimeoutExpired:
+                # subprocess.run() a son propre timeout interne (déclenché avant celui
+                # d'asyncio.wait_for) — non catché auparavant, ça remontait tel quel
+                # jusqu'à la task créée par asyncio.create_task() dans Brain et la faisait
+                # mourir silencieusement (pas de post Discord, pas de decision_logger,
+                # juste un warning asyncio "Task exception was never retrieved").
+                logger.error(f"[StreamCapture] ⏱️ subprocess.TimeoutExpired ffmpeg {label} ({timeout_s}s)")
+                return False
+            except Exception as e:
+                logger.error(f"[StreamCapture] ❌ ffmpeg {label} a levé une exception inattendue: {e}")
                 return False
 
         # D'abord le clip principal, puis les previews (qui dépendent du fichier généré)

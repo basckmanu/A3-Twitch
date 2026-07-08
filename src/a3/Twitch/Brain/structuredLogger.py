@@ -28,6 +28,9 @@ class EventType:
     FILTER_CALIBRATED = "filter_calibrated"
     CALIBRATION_COMPLETE = "calibration_complete"
 
+    # Chat aggregation (dataset ML)
+    CHAT_WINDOW = "chat_window"
+
     # Clip lifecycle
     CLIP_DETECTED = "clip_detected"
     CLIP_MERGED = "clip_merged"
@@ -42,6 +45,7 @@ class EventType:
     REVIEW_GARDER = "review_garder"
     REVIEW_HIGHLIGHT = "review_highlight"
     REVIEW_SUPPRIMER = "review_supprimer"
+    REVIEW_EXPIRE = "review_expire"  # auto-rejeté, faute de review humaine dans le délai
 
     # System
     ERROR = "error"
@@ -89,14 +93,22 @@ class StructuredLogger:
         logger.log_event(EventType.CLIP_DETECTED, {"clip_num": 1, "score": 0.72})
     """
 
-    def log_review(self, clip_num: int, action: str, user: str, user_id: int = 0, reaction_time_sec: float | None = None) -> None:
-        """Log une review Discord. user_id brut jamais stocké en DB (RGPD)."""
+    def log_review(self, clip_num: int, action: str, user: str, user_id: int = 0, reaction_time_sec: float | None = None, channel: str | None = None) -> None:
+        """Log une review Discord. user_id brut jamais stocké en DB (RGPD).
+
+        `channel` doit être le channel d'origine du clip reviewé — cette instance de
+        StructuredLogger est partagée entre tous les streams surveillés, donc sans ce
+        paramètre la review serait attribuée à self.channel (le 1er channel démarré ou
+        "multi"), et le handler DB (qui route par channel_id → session) la perdrait
+        silencieusement.
+        """
         from a3.utils.privacy import pseudonymize
         user_hash = pseudonymize(user) or "unknown"
         event_map = {
             "garder": EventType.REVIEW_GARDER,
             "highlight": EventType.REVIEW_HIGHLIGHT,
             "supprimer": EventType.REVIEW_SUPPRIMER,
+            "expire": EventType.REVIEW_EXPIRE,
         }
         self.log_event(event_map.get(action, EventType.INFO), {
             "clip_num": clip_num,
@@ -104,7 +116,7 @@ class StructuredLogger:
             "user": user_hash,
             "user_id": 0,  # jamais d'ID Discord brut en base
             "reaction_time_sec": reaction_time_sec,
-        })
+        }, channel=channel)
 
     def __init__(
         self,
@@ -136,7 +148,7 @@ class StructuredLogger:
         self._file = open(self._file_path, "a", encoding="utf-8")
 
     def _auto_db_handler(self) -> DatabaseHandler:
-        """Auto-detects DB via DB_TYPE: 'postgres' | 'mysql' | absent → Dummy."""
+        """Auto-detects DB via DB_TYPE: 'postgres' | absent → Dummy."""
         from typing import Any
         db_type = os.getenv("DB_TYPE", "").lower()
 
@@ -151,19 +163,8 @@ class StructuredLogger:
             except Exception as e:
                 self._console.warning(f"[StructuredLogger] ⚠️ PostgreSQL non disponible : {e}")
 
-        elif db_type == "mysql":
-            try:
-                from a3.Twitch.Brain.databaseHandler import MySQLHandler
-                handler = MySQLHandler()
-                if handler._db is not None:
-                    self._console.info("[StructuredLogger] 📦 MySQL handler activé")
-                    return handler
-                self._console.warning("[StructuredLogger] ⚠️ MySQL configuré mais connexion échouée")
-            except Exception as e:
-                self._console.warning(f"[StructuredLogger] ⚠️ MySQL non disponible : {e}")
-
         elif db_type:
-            self._console.warning(f"[StructuredLogger] ⚠️ DB_TYPE inconnu : '{db_type}' (valeurs: 'postgres', 'mysql')")
+            self._console.warning(f"[StructuredLogger] ⚠️ DB_TYPE inconnu : '{db_type}' (seule valeur supportée : 'postgres')")
 
         return DummyDBHandler()
 
@@ -208,7 +209,19 @@ class StructuredLogger:
 
     # ── Convenience shortcuts ────────────────────────────────────
 
-    def log_clip_detected(self, clip_num: int, score: float, détails: dict, auteur: str, repetition_word: str | None, message: str, channel: str | None = None) -> None:
+    def log_clip_detected(
+        self,
+        clip_num: int,
+        score: float,
+        détails: dict,
+        auteur: str,
+        repetition_word: str | None,
+        message: str,
+        viewer_count: int | None = None,
+        game_category: str | None = None,
+        stream_language: str | None = None,
+        channel: str | None = None,
+    ) -> None:
         self.log_event(EventType.CLIP_DETECTED, {
             "channel": channel or self.channel,
             "clip_num": clip_num,
@@ -217,7 +230,10 @@ class StructuredLogger:
             "auteur": auteur,
             "repetition_word": repetition_word,
             "message_excerpt": message[:80],
-        })
+            "viewer_count": viewer_count,
+            "game_category": game_category,
+            "stream_language": stream_language,
+        }, channel=channel)
 
     def log_clip_generated(self, clip_num: int, score: float, chemin: str | None, duree_sec: float, channel: str | None = None) -> None:
         self.log_event(EventType.CLIP_GENERATED, {
@@ -226,7 +242,7 @@ class StructuredLogger:
             "score": round(score, 4),
             "chemin": chemin,
             "duree_sec": round(duree_sec, 1),
-        })
+        }, channel=channel)
 
     def log_clip_merged(self, clip_num: int, score: float, merged_from: int | None = None, channel: str | None = None) -> None:
         self.log_event(EventType.CLIP_MERGED, {
@@ -234,7 +250,7 @@ class StructuredLogger:
             "clip_num": clip_num,
             "score": round(score, 4),
             "merged_from": merged_from,
-        })
+        }, channel=channel)
 
     def log_filter_trigger(self, filtre: str, z_score: float, score_pondere: float, auteur: str, channel: str | None = None) -> None:
         self.log_event(EventType.FILTER_TRIGGER, {
@@ -243,7 +259,7 @@ class StructuredLogger:
             "z_score": round(z_score, 4),
             "score_pondere": round(score_pondere, 4),
             "auteur": auteur,
-        })
+        }, channel=channel)
 
     def log_calibration_complete(self, filtre: str, samples: int, mean: float, std: float, z_score_threshold: float, channel: str | None = None) -> None:
         self.log_event(EventType.CALIBRATION_COMPLETE, {
@@ -253,7 +269,7 @@ class StructuredLogger:
             "mean": round(mean, 4),
             "std": round(std, 4),
             "z_score_threshold": round(z_score_threshold, 2),
-        })
+        }, channel=channel)
 
     def log_filter_score(self, filtre: str, score_raw: float, score_pondere: float, auteur: str, channel: str | None = None) -> None:
         self.log_event(EventType.FILTER_SCORE, {
@@ -262,7 +278,41 @@ class StructuredLogger:
             "score_raw": round(score_raw, 4),
             "score_pondere": round(score_pondere, 4),
             "auteur": auteur,
-        })
+        }, channel=channel)
+
+    def log_chat_window(
+        self,
+        window_start: datetime,
+        window_end: datetime,
+        message_count: int,
+        unique_authors_count: int,
+        message_rate_avg: float,
+        emote_density_avg: float,
+        emotion_score_avg: float,
+        repetition_score_avg: float,
+        clip_activity_score: float,
+        clip_num: int | None = None,
+        viewer_count: int | None = None,
+        game_category: str | None = None,
+        channel: str | None = None,
+    ) -> None:
+        """Log une fenêtre de chat agrégée — dataset pour un futur entraînement
+        supervisé (features de fenêtre → label de review une fois le clip traité)."""
+        self.log_event(EventType.CHAT_WINDOW, {
+            "channel": channel or self.channel,
+            "window_start": window_start.isoformat(),
+            "window_end": window_end.isoformat(),
+            "message_count": message_count,
+            "unique_authors_count": unique_authors_count,
+            "message_rate_avg": round(message_rate_avg, 4),
+            "emote_density_avg": round(emote_density_avg, 4),
+            "emotion_score_avg": round(emotion_score_avg, 4),
+            "repetition_score_avg": round(repetition_score_avg, 4),
+            "clip_activity_score": round(clip_activity_score, 4),
+            "clip_num": clip_num,
+            "viewer_count": viewer_count,
+            "game_category": game_category,
+        }, channel=channel)
 
     def log_error(self, component: str, erreur: str, contexte: dict | None = None, channel: str | None = None) -> None:
         self.log_event(EventType.ERROR, {
@@ -270,18 +320,24 @@ class StructuredLogger:
             "component": component,
             "erreur": erreur,
             "contexte": contexte or {},
-        }, level="ERROR")
+        }, level="ERROR", channel=channel)
 
     # ── Lifecycle ────────────────────────────────────────────────
 
     def close(self) -> None:
-        """Ferme le fichier et flush la DB."""
+        """Ferme le fichier et flush la DB.
+
+        Ne pas appeler self._db.flush() ici : le worker thread du DB handler
+        tourne encore à ce stade, et flush() (appelé depuis ce thread-ci)
+        utiliserait le même curseur psycopg2 en même temps que lui — un
+        curseur psycopg2 n'est pas thread-safe pour un accès concurrent.
+        self._db.close() fait déjà les choses dans le bon ordre : il arrête
+        le worker (join) puis flush une fois qu'il ne tourne plus."""
         try:
             self._file.flush()
             self._file.close()
         except Exception:
             pass
-        self._db.flush()
         self._db.close()
 
     def __enter__(self) -> "StructuredLogger":

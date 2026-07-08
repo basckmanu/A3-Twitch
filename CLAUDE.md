@@ -40,15 +40,15 @@ TwitchBot (mainTwitch.py)
 
 ## Key Concepts
 
-**Filter Weights** (defined in `mainBrainTwitch.py`):
-- UniqueAuthors: 0.35
-- MessageRate: 0.25
-- Emotions: 0.25
+**Filter Weights** (`POIDS_FILTRES` in `mainBrainTwitch.py` — weights don't sum to 1.0, they're independent multipliers, not a distribution):
+- Emotions: 0.35
+- ClipActivity: 0.30
+- MessageRate: 0.20
+- UniqueAuthors: 0.20
 - EmoteDensity: 0.20
-- ClipActivity: 0.15
-- Repetition: 0.10
+- Repetition: 0.12
 
-**Clip Decision Flow**: Filters run on each chat message → Brain aggregates scores (weighted) → If score >= 0.45 and volume filters pass → recording starts → after hype ends, clip is cut and sent to Discord.
+**Clip Decision Flow**: Filters run on each chat message → Brain aggregates scores (weighted) → If score >= `SEUIL_CLIP` (0.42) and volume filters pass → recording starts → after hype ends, clip is cut and sent to Discord.
 
 **Adaptive Filters**: `FiltreAdaptatif` uses Welford's online algorithm to maintain running mean/std statistics. Filters calibrate automatically over first ~50 samples, then detect spikes above `z_score` threshold relative to recent baseline.
 

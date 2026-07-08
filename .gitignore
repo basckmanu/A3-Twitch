@@ -11,6 +11,9 @@ clips_output/
 clips_rejected/
 clips_validated/
 clips_highlights/
+clips/
+cache/
 logs/
 decisions/
 debug.log
+pending_reviews.json
