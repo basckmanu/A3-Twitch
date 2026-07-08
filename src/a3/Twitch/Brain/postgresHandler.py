@@ -539,27 +539,38 @@ class PostgresHandler(DatabaseHandler):
             except Exception:
                 pass
 
-    def _close_orphan_sessions(self) -> None:
-        """Clôture toute session encore 'active' au démarrage du process.
+    # Au-delà de cet âge, une session encore 'active' est considérée orpheline. Ne PAS
+    # fermer toute session 'active' inconditionnellement : n'importe quel code qui
+    # instancie PostgresHandler (un script d'analyse, un futur dashboard en lecture
+    # seule connecté à la même base pendant que le bot tourne) déclenche aussi
+    # _creer_tables() → _close_orphan_sessions(), et interromprait une session
+    # réellement en cours (observé en pratique : un script de test a marqué la
+    # session live d'un stream comme 'interrupted' en pleine diffusion). Un seuil
+    # large (12h — au-delà de la durée d'un stream Twitch typique) laisse les
+    # sessions réellement actives tranquilles tout en nettoyant les vrais reliquats
+    # de crash dans un délai raisonnable.
+    ORPHAN_SESSION_AGE_SEC = 12 * 60 * 60
 
-        Une seule instance du bot tourne à la fois : si une session est encore
-        'active' quand ce process démarre, c'est forcément un reliquat d'un
-        process précédent tué brutalement (crash, kill, extinction machine).
-        Le nettoyage par channel dans _insert_session ne référme ces sessions
-        que si CE channel redémarre — un channel retiré de CHANNELS restait
-        donc actif indéfiniment. Ce nettoyage global, exécuté une fois par
-        démarrage, couvre aussi ce cas.
+    def _close_orphan_sessions(self) -> None:
+        """Clôture les sessions 'active' trop vieilles pour être encore légitimes.
+
+        Un crash / kill du process précédent laisse sa session en 'active' pour
+        toujours. Le nettoyage par channel dans _insert_session ne référme ces
+        sessions que si CE channel redémarre — un channel retiré de CHANNELS restait
+        donc actif indéfiniment. Ce nettoyage global, exécuté à chaque connexion,
+        couvre aussi ce cas, mais seulement au-delà de ORPHAN_SESSION_AGE_SEC pour ne
+        pas interrompre une session légitimement en cours (voir note ci-dessus).
         """
         try:
             self._cursor.execute(
-                """UPDATE sessions SET status = 'interrupted', ended_at = NOW(),
+                f"""UPDATE sessions SET status = 'interrupted', ended_at = NOW(),
                        duration_seconds = EXTRACT(EPOCH FROM (NOW() - started_at))::INT,
                        clips_detected = (SELECT COUNT(*) FROM clips WHERE session_id = sessions.id),
                        clips_validated = (SELECT COUNT(*) FROM clips WHERE session_id = sessions.id AND decision = 'garder'),
                        clips_highlighted = (SELECT COUNT(*) FROM clips WHERE session_id = sessions.id AND decision = 'highlight'),
                        clips_rejected = (SELECT COUNT(*) FROM clips WHERE session_id = sessions.id AND decision IN ('supprimer', 'expire')),
                        avg_viewers = (SELECT ROUND(AVG(cw.viewer_count))::INT FROM chat_windows cw WHERE cw.session_id = sessions.id)
-                   WHERE status = 'active'"""
+                   WHERE status = 'active' AND started_at < NOW() - INTERVAL '{self.ORPHAN_SESSION_AGE_SEC} seconds'"""
             )
             if self._cursor.rowcount:
                 log.warning(f"[PostgresHandler] 🧹 {self._cursor.rowcount} session(s) 'active' orpheline(s) clôturée(s) au démarrage")
@@ -1156,18 +1167,26 @@ class PostgresHandler(DatabaseHandler):
             log.error(f"[PostgresHandler] ❌ _insert_snapshot ÉCHEC\n{traceback.format_exc()}")
 
     def _update_clip_generated(self, event: dict, data: dict, session_id: str, channel_id: str | None, channel_name: str) -> None:
-        """Met à jour le clip avec le chemin fichier généré et sa durée."""
+        """Met à jour le clip avec le chemin fichier généré, sa durée et son score final.
+
+        Le score au moment de CLIP_DETECTED (déjà en base via _insert_clip) n'est que le
+        score au franchissement du seuil — le score réellement rapporté (Discord,
+        decisions/*.json, cooldown adaptatif) est celui au pic de la hype, calculé pendant
+        l'enregistrement et connu seulement ici, à la génération. Sans ce GREATEST,
+        clips.score_final restait figé sur le score initial, plus bas que le score réel."""
         pk = self._session_pks.get(channel_name)
         if pk is None:
             return
         try:
             with self._savepoint("update_clip_generated"):
                 self._cursor.execute(
-                    """UPDATE clips SET file_path_hq = %s, duration_seconds = %s
+                    """UPDATE clips SET file_path_hq = %s, duration_seconds = %s,
+                           score_final = GREATEST(score_final, %s)
                        WHERE session_id = %s AND clip_num = %s""",
                     (
                         data.get("chemin"),
                         data.get("duree_sec"),
+                        data.get("score", 0),
                         pk,
                         data.get("clip_num"),
                     ),

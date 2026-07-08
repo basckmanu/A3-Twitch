@@ -12,23 +12,30 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+from a3.config import BASE_DIR as _BASE
 from a3.utils.privacy import pseudonymize
 
 log = logging.getLogger("A3")
 
-_BASE = Path(__file__).resolve().parents[3]
 
-
-# Dossiers par channel : clips/{channel}/{sub}
+# Dossiers post-review par channel : clips/{channel}/{sub} (déplacés par le Renderer
+# une fois une décision prise — voir mainRendererTwitch.py::SOUS_DOSSIER_ACTION)
 def _channel_clips(channel: str, sub: str) -> Path:
     return _BASE / "clips" / channel / sub
+
+
+# Dossier pré-review : là où streamCapture.py écrit le clip HQ + les previews avant
+# toute décision — jamais nettoyé auparavant (mauvaise racine : "output" n'existe pas,
+# le vrai dossier est "clips_output" à la racine, pas "clips/{channel}/output").
+def _channel_clips_output(channel: str) -> Path:
+    return _BASE / "clips_output" / channel
 
 
 def _dossier_decisions(channel: str) -> Path:
     return _BASE / "decisions" / channel
 
 
-CLIP_SUBDIRS = ["output", "validated", "highlights", "rejected"]
+CLIP_SUBDIRS_POST_REVIEW = ["validated", "highlights", "rejected"]
 RETENTION_DAYS = 2
 CLEANUP_INTERVAL_SEC = 3600
 
@@ -67,12 +74,18 @@ class DecisionLogger:
             self._supprimer_vieux_clips()
 
     def _supprimer_vieux_clips(self) -> None:
-        """Supprime les fichiers clips plus vieux que retention_days."""
+        """Supprime les fichiers clips plus vieux que retention_days.
+
+        Balaie à la fois le dossier pré-review (clips_output/{channel} — clip HQ tant
+        que non reviewé, et previews qui n'en bougent jamais même après review) et les
+        dossiers post-review (clips/{channel}/{validated,highlights,rejected})."""
         limite = time.time() - (self._retention_days * 86400)
         total_supprimes = 0
 
-        for sub in CLIP_SUBDIRS:
-            dossier = self._clip_dir(sub)
+        dossiers = [_channel_clips_output(self.channel)]
+        dossiers += [self._clip_dir(sub) for sub in CLIP_SUBDIRS_POST_REVIEW]
+
+        for dossier in dossiers:
             if not dossier.exists():
                 continue
             for f in dossier.iterdir():

@@ -4,7 +4,6 @@
 # Utilise un buffer circulaire de segments pour permettre le clip rétroactif.
 import asyncio
 import logging
-import os
 import subprocess
 import threading
 import time
@@ -13,24 +12,9 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+from a3.config import BASE_DIR as _BASE
+
 logger = logging.getLogger("A3.StreamCapture")
-
-def _resolve_base() -> Path:
-    """Résout le répertoire de base pour les fichiers de capture.
-
-    Priorité :
-    1. A3_BASE_DIR (variable d'environnement, permet override explicite)
-    2. /app (Docker standard)
-    3. cwd (compatible install pip / dev)
-    """
-    if env_base := os.getenv("A3_BASE_DIR"):
-        return Path(env_base)
-    if Path("/app").exists():
-        return Path("/app")
-    return Path.cwd()
-
-
-_BASE = _resolve_base()
 
 BUFFER_DUREE_MAX_SEC = 600
 DUREE_SEGMENT_SEC = 30

@@ -11,13 +11,12 @@ from pathlib import Path
 
 import discord
 
+from a3.config import BASE_DIR as _BASE
 from a3.config import DISCORD_BOT_TOKEN
 from a3.config import DISCORD_CHANNEL_ID as _DISCORD_CHANNEL_ID_STR
 from a3.utils.privacy import pseudonymize
 
 log = logging.getLogger("A3")
-
-_BASE = Path(__file__).resolve().parents[3]
 
 def _CHANNEL(channel: str, sub: str) -> Path:
     return _BASE / "clips" / channel / sub
