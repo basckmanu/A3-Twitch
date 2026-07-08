@@ -1001,10 +1001,18 @@ class PostgresHandler(DatabaseHandler):
 
                 # Décision sur le clip — toujours la dernière action en date (un reviewer
                 # peut se raviser après un premier clic ; is_first_review ne sert qu'aux
-                # statistiques de réactivité, pas à figer la décision sur le 1er clic)
+                # statistiques de réactivité, pas à figer la décision sur le 1er clic).
+                # file_path_hq : COALESCE avec la valeur existante si le fichier n'a pas
+                # été déplacé (new_file_path absent) — sans ça, la colonne restait figée
+                # sur le chemin pré-review (clips_output/...), qui n'existe plus une fois
+                # le fichier déplacé vers validated/highlights/rejected.
                 self._cursor.execute(
-                    "UPDATE clips SET decision = %s, reviewed_at = %s, reviewer_hash = %s WHERE id = %s",
-                    (action, event.get("timestamp", datetime.now(timezone.utc)), reviewer_hash, clip_db_id),
+                    "UPDATE clips SET decision = %s, reviewed_at = %s, reviewer_hash = %s, "
+                    "file_path_hq = COALESCE(%s, file_path_hq) WHERE id = %s",
+                    (
+                        action, event.get("timestamp", datetime.now(timezone.utc)), reviewer_hash,
+                        data.get("new_file_path") or None, clip_db_id,
+                    ),
                 )
 
                 # Propager le label sur chat_windows liées à ce clip

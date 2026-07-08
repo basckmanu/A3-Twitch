@@ -224,6 +224,7 @@ def _appliquer_decision(
             clip_num, action, reviewer_name, 0,
             reaction_time_sec=round(time.time() - sent_at, 1),
             reason=raison, channel=channel, user_is_hash=reviewer_is_hash,
+            new_file_path=str(chemin_dest) if chemin_dest else None,
         )
     return chemin_dest
 
@@ -674,6 +675,7 @@ class Renderer:
                         clip_num, "expire", "system_auto_expire", 0,
                         reaction_time_sec=round(age, 1), channel=channel_clip,
                         reason="timeout_sans_review",
+                        new_file_path=str(dest) if dest else None,
                     )
 
                 message_id = entry.get("message_id")

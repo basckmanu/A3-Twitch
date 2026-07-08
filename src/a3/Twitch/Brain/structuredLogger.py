@@ -106,6 +106,7 @@ class StructuredLogger:
         channel: str | None = None,
         reason: str | None = None,
         user_is_hash: bool = False,
+        new_file_path: str | None = None,
     ) -> None:
         """Log une review Discord. user_id brut jamais stocké en DB (RGPD).
 
@@ -121,6 +122,10 @@ class StructuredLogger:
         review reconstruite depuis pending_reviews.json après un redémarrage, où
         le nom brut n'a jamais été persisté) — évite de le hasher une seconde fois,
         ce qui casserait la cohérence du hash reviewer entre les deux chemins.
+        `new_file_path` : chemin où le fichier vient d'être déplacé (validated/
+        highlights/rejected) — sans ça, clips.file_path_hq restait figé sur le
+        chemin pré-review (clips_output/...), qui n'existe plus une fois le clip
+        déplacé par la décision.
         """
         from a3.utils.privacy import pseudonymize
         user_hash = (user if user_is_hash else pseudonymize(user)) or "unknown"
@@ -137,6 +142,7 @@ class StructuredLogger:
             "user_id": 0,  # jamais d'ID Discord brut en base
             "reaction_time_sec": reaction_time_sec,
             "reason": reason,
+            "new_file_path": new_file_path,
         }, channel=channel)
 
     def __init__(
