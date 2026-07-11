@@ -17,3 +17,4 @@ logs/
 decisions/
 debug.log
 pending_reviews.json
+backups/
