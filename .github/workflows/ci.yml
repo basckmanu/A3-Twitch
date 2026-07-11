@@ -18,24 +18,8 @@ jobs:
       - name: Installer les dépendances (dev = ruff, mypy, pytest)
         run: pip install -e ".[dev]"
 
-      - name: Diagnostic environnement (echoue sur Windows, jamais reproduit en local)
-        run: |
-          python --version
-          which ruff
-          ruff --version
-          pip show ruff
-          locale
-
       - name: ruff check
-        run: |
-          set +e
-          ruff check src/ tests/ --output-format=full --no-cache > /tmp/ruff_out.txt 2>&1
-          code=$?
-          echo "::notice::ruff exit code = $code"
-          while IFS= read -r line; do
-            echo "::error::$line"
-          done < /tmp/ruff_out.txt
-          exit $code
+        run: ruff check src/ tests/
 
       - name: mypy
         run: mypy src/
