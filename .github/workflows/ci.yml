@@ -29,13 +29,12 @@ jobs:
       - name: ruff check
         run: |
           set +e
-          output=$(ruff check src/ tests/ --output-format=full --no-cache 2>&1)
+          ruff check src/ tests/ --output-format=full --no-cache > /tmp/ruff_out.txt 2>&1
           code=$?
-          echo "::notice::ruff exit code = $code, output length = ${#output}"
-          echo "$output"
-          if [ $code -ne 0 ]; then
-            echo "::error::$output"
-          fi
+          echo "::notice::ruff exit code = $code"
+          while IFS= read -r line; do
+            echo "::error::$line"
+          done < /tmp/ruff_out.txt
           exit $code
 
       - name: mypy
