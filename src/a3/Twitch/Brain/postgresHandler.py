@@ -480,6 +480,70 @@ class PostgresHandler(DatabaseHandler):
             END $$;
         """, "rename username_hash→reviewer_hash")
 
+        # Le trigger sync_session_clip_counts_delta (créé hors du code, vestige d'un
+        # schéma antérieur, appartenant au rôle "postgres" — pas modifiable par a3user)
+        # testait action IN ('validate','highlight','reject') — mais le code écrit les
+        # décisions en français ('garder'/'highlight'/'supprimer'). Seul 'highlight'
+        # matchait par coïncidence lexicale : clips_validated/rejected n'étaient donc
+        # jamais mis à jour en direct par ce trigger (uniquement au recalcul de fermeture
+        # de session dans _update_session_fin/_close_orphan_sessions, qui masquait le
+        # problème). Impossible de faire un CREATE OR REPLACE sur la fonction existante
+        # (appartient à "postgres"), donc on la remplace par une nouvelle fonction/trigger
+        # appartenant à a3user (propriétaire de la table reviews, donc autorisé à
+        # DROP/CREATE TRIGGER dessus) plutôt que de modifier l'ancienne.
+        self._exec_ddl("""
+            CREATE OR REPLACE FUNCTION sync_session_clip_counts_delta_fr()
+            RETURNS trigger
+            LANGUAGE plpgsql
+            AS $function$
+            BEGIN
+                IF TG_OP = 'INSERT' THEN
+                    IF NEW.action = 'garder' THEN
+                        UPDATE sessions SET clips_validated = clips_validated + 1 WHERE id = NEW.session_id;
+                    ELSIF NEW.action = 'highlight' THEN
+                        UPDATE sessions SET clips_highlighted = clips_highlighted + 1 WHERE id = NEW.session_id;
+                    ELSIF NEW.action IN ('supprimer', 'expire') THEN
+                        UPDATE sessions SET clips_rejected = clips_rejected + 1 WHERE id = NEW.session_id;
+                    END IF;
+                ELSIF TG_OP = 'DELETE' THEN
+                    IF OLD.action = 'garder' THEN
+                        UPDATE sessions SET clips_validated = clips_validated - 1 WHERE id = OLD.session_id;
+                    ELSIF OLD.action = 'highlight' THEN
+                        UPDATE sessions SET clips_highlighted = clips_highlighted - 1 WHERE id = OLD.session_id;
+                    ELSIF OLD.action IN ('supprimer', 'expire') THEN
+                        UPDATE sessions SET clips_rejected = clips_rejected - 1 WHERE id = OLD.session_id;
+                    END IF;
+                ELSIF TG_OP = 'UPDATE' THEN
+                    UPDATE sessions SET
+                        clips_validated = clips_validated
+                            + CASE WHEN NEW.action = 'garder' AND OLD.action <> 'garder' THEN 1
+                                   WHEN NEW.action <> 'garder' AND OLD.action = 'garder' THEN -1
+                                   ELSE 0 END,
+                        clips_highlighted = clips_highlighted
+                            + CASE WHEN NEW.action = 'highlight' AND OLD.action <> 'highlight' THEN 1
+                                   WHEN NEW.action <> 'highlight' AND OLD.action = 'highlight' THEN -1
+                                   ELSE 0 END,
+                        clips_rejected = clips_rejected
+                            + CASE WHEN NEW.action IN ('supprimer', 'expire') AND OLD.action NOT IN ('supprimer', 'expire') THEN 1
+                                   WHEN NEW.action NOT IN ('supprimer', 'expire') AND OLD.action IN ('supprimer', 'expire') THEN -1
+                                   ELSE 0 END
+                    WHERE id = NEW.session_id;
+                END IF;
+                RETURN COALESCE(NEW, OLD);
+            END;
+            $function$
+        """, "create sync_session_clip_counts_delta_fr (valeurs français)")
+
+        self._exec_ddl(
+            "DROP TRIGGER IF EXISTS trigger_sync_session_reviews ON reviews",
+            "drop old trigger_sync_session_reviews",
+        )
+        self._exec_ddl("""
+            CREATE TRIGGER trigger_sync_session_reviews
+            AFTER INSERT OR DELETE OR UPDATE ON reviews
+            FOR EACH ROW EXECUTE FUNCTION sync_session_clip_counts_delta_fr()
+        """, "recreate trigger_sync_session_reviews on corrected function")
+
         self._ensure_partitions()
 
         try:

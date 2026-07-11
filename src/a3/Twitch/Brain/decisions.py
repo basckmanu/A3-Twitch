@@ -18,24 +18,17 @@ from a3.utils.privacy import pseudonymize
 log = logging.getLogger("A3")
 
 
-# Dossiers post-review par channel : clips/{channel}/{sub} (déplacés par le Renderer
-# une fois une décision prise — voir mainRendererTwitch.py::SOUS_DOSSIER_ACTION)
-def _channel_clips(channel: str, sub: str) -> Path:
-    return _BASE / "clips" / channel / sub
-
-
-# Dossier pré-review : là où streamCapture.py écrit le clip HQ + les previews avant
-# toute décision — jamais nettoyé auparavant (mauvaise racine : "output" n'existe pas,
-# le vrai dossier est "clips_output" à la racine, pas "clips/{channel}/output").
-def _channel_clips_output(channel: str) -> Path:
-    return _BASE / "clips_output" / channel
-
-
 def _dossier_decisions(channel: str) -> Path:
     return _BASE / "decisions" / channel
 
 
-CLIP_SUBDIRS_POST_REVIEW = ["validated", "highlights", "rejected"]
+# "validated"/"highlights" ne sont VOLONTAIREMENT PAS balayés par la rétention : un
+# reviewer humain a explicitement choisi de garder ce clip, contrairement à "rejected"
+# (décision de suppression) ou au buffer pré-review (jamais reviewé). Les inclure ici a
+# causé une perte de données réelle (2026-07-11) : les 5 seuls clips "garder"/"highlight"
+# alors en base ont été supprimés par le cleanup automatique dès qu'ils ont dépassé
+# RETENTION_DAYS, alors que la décision explicite du reviewer était de les CONSERVER.
+CLIP_SUBDIRS_POST_REVIEW = ["rejected"]
 RETENTION_DAYS = 2
 CLEANUP_INTERVAL_SEC = 3600
 
@@ -58,9 +51,6 @@ class DecisionLogger:
         self._cleanup_task: asyncio.Task | None = None
         log.info(f"[Decisions] 📋 Session démarrée → {self._nom_fichier}")
 
-    def _clip_dir(self, sub: str) -> Path:
-        return _channel_clips(self.channel, sub)
-
     def _start_cleanup(self) -> None:
         """Lance le cleanup en arrière-plan (une seule fois, après démarrage event loop)."""
         if self._cleanup_task is not None:
@@ -69,6 +59,10 @@ class DecisionLogger:
         log.info(f"[Decisions] 🧹 Cleanup policy actif — retention: {self._retention_days} jours")
 
     async def _cleanup_loop(self) -> None:
+        # Nettoie tout de suite au démarrage plutôt que d'attendre CLEANUP_INTERVAL_SEC
+        # (1h) — sinon un redémarrage fréquent du bot fait que le cleanup ne tourne
+        # quasiment jamais (il ne survit pas à l'arrêt du process).
+        self._supprimer_vieux_clips()
         while True:
             await asyncio.sleep(CLEANUP_INTERVAL_SEC)
             self._supprimer_vieux_clips()
@@ -76,14 +70,39 @@ class DecisionLogger:
     def _supprimer_vieux_clips(self) -> None:
         """Supprime les fichiers clips plus vieux que retention_days.
 
-        Balaie à la fois le dossier pré-review (clips_output/{channel} — clip HQ tant
-        que non reviewé, et previews qui n'en bougent jamais même après review) et les
-        dossiers post-review (clips/{channel}/{validated,highlights,rejected})."""
+        Balaie TOUS les channels trouvés sur disque (pas seulement self.channel) : un
+        channel retiré de CHANNELS n'a plus de DecisionLogger/StreamCapture actif, donc
+        plus rien ne nettoierait jamais ses fichiers si on se limitait à self.channel.
+
+        Couvre le dossier pré-review (clips_output/{channel} — clip HQ tant que non
+        reviewé, et previews qui n'en bougent jamais même après review), les dossiers
+        post-review (clips/{channel}/{validated,highlights,rejected}), et
+        buffer_segments/{channel} — jamais balayé auparavant : StreamCapture ne purge
+        que les segments connus du buffer EN MÉMOIRE d'une capture en cours pour CE
+        channel précis (10s max de latence normalement, buffer plafonné à 10 min), donc
+        les segments d'un channel retiré de CHANNELS ou laissés par un process tué sans
+        passer par arreter() restaient orphelins pour toujours (observé : 2.8 Go
+        accumulés sur des channels plus surveillés depuis des mois)."""
         limite = time.time() - (self._retention_days * 86400)
         total_supprimes = 0
 
-        dossiers = [_channel_clips_output(self.channel)]
-        dossiers += [self._clip_dir(sub) for sub in CLIP_SUBDIRS_POST_REVIEW]
+        dossiers: list[Path] = []
+
+        clips_output_root = _BASE / "clips_output"
+        if clips_output_root.exists():
+            dossiers += [d for d in clips_output_root.iterdir() if d.is_dir()]
+
+        clips_root = _BASE / "clips"
+        if clips_root.exists():
+            for channel_dir in clips_root.iterdir():
+                if channel_dir.is_dir():
+                    dossiers += [channel_dir / sub for sub in CLIP_SUBDIRS_POST_REVIEW]
+
+        # buffer_segments : uniquement les segments .ts et les listes de concat
+        # résiduelles — jamais les .log (activement tenus ouverts en append par
+        # streamlink/ffmpeg tant qu'une capture tourne).
+        segments_root = _BASE / "buffer_segments"
+        segments_dossiers = [d for d in segments_root.iterdir() if d.is_dir()] if segments_root.exists() else []
 
         for dossier in dossiers:
             if not dossier.exists():
@@ -98,8 +117,26 @@ class DecisionLogger:
                         except Exception as e:
                             log.warning(f"[Decisions] ⚠️ Cannot delete {f}: {e}")
 
+        for dossier in segments_dossiers:
+            for f in dossier.glob("seg_*.ts"):
+                age = f.stat().st_mtime
+                if age < limite:
+                    try:
+                        f.unlink()
+                        total_supprimes += 1
+                    except Exception as e:
+                        log.warning(f"[Decisions] ⚠️ Cannot delete {f}: {e}")
+            for f in dossier.glob("_concat_*.txt"):
+                age = f.stat().st_mtime
+                if age < limite:
+                    try:
+                        f.unlink()
+                        total_supprimes += 1
+                    except Exception as e:
+                        log.warning(f"[Decisions] ⚠️ Cannot delete {f}: {e}")
+
         if total_supprimes > 0:
-            log.info(f"[Decisions] 🗑️ Cleanup: {total_supprimes} ancien(s) clip(s) supprimé(s)")
+            log.info(f"[Decisions] 🗑️ Cleanup: {total_supprimes} ancien(s) fichier(s) supprimé(s)")
 
     def log_clip(
         self,

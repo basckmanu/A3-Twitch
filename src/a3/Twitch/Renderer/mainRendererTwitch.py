@@ -542,6 +542,26 @@ class Renderer:
         if mot_rep:
             contenu += f"\n🔤 Mot répété : `{mot_rep}`"
 
+        # Un MERGE (Brain._annuler_dernier_clip remplace un clip déjà entièrement traité
+        # par un pic plus fort sous le même clip_num) laissait jusqu'ici un ancien message
+        # Discord orphelin : ses boutons restaient actifs, mais la ligne DB de ce clip_num
+        # avait déjà été écrasée (ON CONFLICT DO UPDATE) par le nouveau clip — cliquer sur
+        # l'ancien message appliquait donc la décision au mauvais clip. On supprime l'ancien
+        # message avant d'envoyer le nouveau, tant qu'il en existe un pour ce (channel, clip_num).
+        ancien = next(
+            (c for c in _lire_pending() if c.get("clip_num") == clip_num and c.get("channel") == streamer),
+            None,
+        )
+        if ancien and ancien.get("message_id"):
+            try:
+                ancien_msg = await self._channel.fetch_message(ancien["message_id"])
+                await ancien_msg.delete()
+                log.info(f"[Renderer] 🔀 Ancien message Discord du clip #{clip_num} ({streamer}) supprimé (remplacé par un merge)")
+            except discord.NotFound:
+                pass
+            except Exception as e:
+                log.warning(f"[Renderer] ⚠️ Impossible de supprimer l'ancien message mergé #{clip_num} ({streamer}): {e}")
+
         # Sauvegarder avant envoi pour que les boutons survivent aux redémarrages.
         # Utiliser `streamer` (le channel réel d'origine du clip) et non `self.channel`
         # (fixé au premier channel du bot) — sinon tous les clips de tous les streams
