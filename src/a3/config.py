@@ -41,16 +41,16 @@ CLIENT_SECRET = os.getenv("CLIENT_SECRET")
 DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 DISCORD_CHANNEL_ID = os.getenv("DISCORD_CHANNEL_ID")
 
-# Base de données (HeidiSQL / MySQL / MariaDB)
+# Base de données (PostgreSQL — seul DB_TYPE supporté, voir structuredLogger.py::_make_db_handler)
 DB_HOST = os.getenv("DB_HOST", "localhost")
 try:
-    DB_PORT = int(os.getenv("DB_PORT", "3306"))
+    DB_PORT = int(os.getenv("DB_PORT", "5432"))
 except ValueError:
-    DB_PORT = 3306
-DB_USER = os.getenv("DB_USER", "root")
+    DB_PORT = 5432
+DB_USER = os.getenv("DB_USER", "postgres")
 DB_PASSWORD = os.getenv("DB_PASSWORD", "")
 DB_NAME = os.getenv("DB_NAME", "a3_db")
-DB_SSLMODE = os.getenv("DB_SSLMODE", "prefer")  # only used by PostgresHandler
+DB_SSLMODE = os.getenv("DB_SSLMODE", "prefer")
 
 _REQUIRED = ["TOKEN", "CLIENT_ID", "CLIENT_SECRET", "DISCORD_BOT_TOKEN", "DISCORD_CHANNEL_ID", "A3_HASH_SALT"]
 _missing = [name for name in _REQUIRED if not globals().get(name)]
