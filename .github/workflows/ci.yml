@@ -27,7 +27,16 @@ jobs:
           locale
 
       - name: ruff check
-        run: ruff check src/ tests/ --output-format=full --no-cache
+        run: |
+          set +e
+          output=$(ruff check src/ tests/ --output-format=full --no-cache 2>&1)
+          code=$?
+          echo "::notice::ruff exit code = $code, output length = ${#output}"
+          echo "$output"
+          if [ $code -ne 0 ]; then
+            echo "::error::$output"
+          fi
+          exit $code
 
       - name: mypy
         run: mypy src/
