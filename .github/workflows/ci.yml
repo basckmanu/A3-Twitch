@@ -1,6 +1,6 @@
 name: CI
 
-on:
+"on":
   push:
     branches: [main]
   pull_request:
@@ -15,7 +15,7 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Installer les dépendances (dont dev: ruff, mypy, pytest)
+      - name: Installer les dépendances (dev = ruff, mypy, pytest)
         run: pip install -e ".[dev]"
 
       - name: ruff check
