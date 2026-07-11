@@ -26,6 +26,11 @@ services:
       - a3_decisions:/app/decisions
       - a3_logs:/app/logs
       - a3_cache:/app/cache
+      # pending_reviews.json fait survivre l'état des reviews Discord en attente à un
+      # redémarrage du bot (voir mainRendererTwitch.py) — sans ce montage, il était
+      # perdu à chaque recréation du conteneur. Le Dockerfile crée ce fichier ("[]")
+      # avant ce point de montage, sinon Docker en ferait un dossier au lieu d'un fichier.
+      - a3_pending_reviews:/app/pending_reviews.json
     environment:
       - PYTHONUNBUFFERED=1
     # Permet d'accéder au stream (network_mode: host nécessaire pour streamlink)
@@ -41,3 +46,4 @@ volumes:
   a3_decisions:
   a3_logs:
   a3_cache:
+  a3_pending_reviews:

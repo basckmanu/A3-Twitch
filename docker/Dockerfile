@@ -20,6 +20,14 @@ RUN pip install --no-cache-dir .
 # Fichier de blacklist (mots à ignorer)
 COPY blacklist_mots.json .
 
+# pending_reviews.json doit exister comme FICHIER dans l'image avant d'être monté en
+# volume nommé dans docker-compose.yml — un volume nommé monté sur un chemin absent de
+# l'image est initialisé par Docker comme un DOSSIER (pas un fichier), ce qui casse
+# open(FICHIER_PENDING, "w") au premier redémarrage du bot. Le contenu initial ("[]")
+# est celui que Renderer._lire_pending() écrit lui-même quand le fichier n'existe pas
+# encore.
+RUN echo '[]' > pending_reviews.json
+
 # Crée les dossiers runtime (layout clips/{channel}/{validated,highlights,rejected} —
 # les anciens dossiers à plat clips_validated/clips_highlights/clips_rejected ne sont
 # plus utilisés par le code depuis la refonte BASE_DIR)
