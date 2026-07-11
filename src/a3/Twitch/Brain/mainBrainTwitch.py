@@ -401,7 +401,12 @@ class Brain:
             f"**Durée** : {duree_str}  |  **Clips** : {self.clips_detectes}  |  **Taux** : {taux:.1f}%",
         ]
 
-        if self.clips_detectes > 0:
+        # Basé sur self.historique (clips dont _executeur_clip a fini de tourner) et
+        # non self.clips_detectes (incrémenté dès la détection, avant la fin du
+        # traitement) — sinon un clip encore en cours au moment du bilan (ex: stop()
+        # appelé pendant l'enregistrement) fait planter ce bloc (ZeroDivisionError sur
+        # une moyenne de liste vide) et le rapport de session n'est jamais envoyé.
+        if self.historique:
             scores = [d["score_final"] for d in self.historique]
             lignes.append(f"**Score moyen** : {sum(scores) / len(scores):.2f}  |  **Score max** : {max(scores):.2f}")
 
@@ -455,7 +460,10 @@ class Brain:
         log.info(f"  ⬜ Clips rejetés     : {self.clips_rejetes}")
         log.info(f"  📈 Taux validation   : {taux:.1f}%")
 
-        if self.clips_detectes > 0:
+        # Voir _construire_rapport_discord() : basé sur self.historique, pas
+        # self.clips_detectes (un clip encore en cours de traitement au moment du
+        # bilan compte dans clips_detectes mais n'est pas encore dans historique).
+        if self.historique:
             scores = [d["score_final"] for d in self.historique]
             log.info(f"  Score moyen         : {sum(scores) / len(scores):.2f}")
             log.info(f"  Score max           : {max(scores):.2f}")
@@ -486,7 +494,10 @@ class Brain:
                 "duree_session_sec": (datetime.now() - self.debut_live).total_seconds(),
             }, channel=self.channel, session_id=self.session_id)
 
-        self.afficher_bilan_final()
+        try:
+            self.afficher_bilan_final()
+        except Exception as e:
+            log.warning(f"[Brain] ⚠️ Impossible d'afficher le bilan final : {e}")
 
         if self.renderer and hasattr(self.renderer, "_channel") and self.renderer._channel:
             try:

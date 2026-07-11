@@ -20,8 +20,10 @@ RUN pip install --no-cache-dir .
 # Fichier de blacklist (mots à ignorer)
 COPY blacklist_mots.json .
 
-# Crée les dossiers runtime
-RUN mkdir -p logs buffer_segments clips_output clips_validated clips_highlights clips_rejected decisions cache
+# Crée les dossiers runtime (layout clips/{channel}/{validated,highlights,rejected} —
+# les anciens dossiers à plat clips_validated/clips_highlights/clips_rejected ne sont
+# plus utilisés par le code depuis la refonte BASE_DIR)
+RUN mkdir -p logs buffer_segments clips_output clips decisions cache
 
 COPY docker/start.sh /start.sh
 RUN chmod +x /start.sh

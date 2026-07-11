@@ -15,11 +15,14 @@ services:
     env_file:
       - ../.env
     volumes:
-      # Montage des dossiers pour persister les clips et logs
-      - a3_clips:/app/clips_output
-      - a3_validated:/app/clips_validated
-      - a3_highlights:/app/clips_highlights
-      - a3_rejected:/app/clips_rejected
+      # Montage des dossiers pour persister les clips et logs.
+      # a3_validated/a3_highlights/a3_rejected pointaient jusqu'ici sur l'ancien layout
+      # à plat (clips_validated/, clips_highlights/, clips_rejected/ à la racine) — le
+      # code écrit depuis la refonte BASE_DIR dans clips/{channel}/{validated,highlights,
+      # rejected}, donc ces clips ne persistaient plus du tout entre deux conteneurs
+      # (perdus à chaque recréation). Remplacé par un seul volume sur /app/clips.
+      - a3_clips_output:/app/clips_output
+      - a3_clips_reviewed:/app/clips
       - a3_decisions:/app/decisions
       - a3_logs:/app/logs
       - a3_cache:/app/cache
@@ -33,10 +36,8 @@ services:
       - "host.docker.internal:host-gateway"
 
 volumes:
-  a3_clips:
-  a3_validated:
-  a3_highlights:
-  a3_rejected:
+  a3_clips_output:
+  a3_clips_reviewed:
   a3_decisions:
   a3_logs:
   a3_cache:
