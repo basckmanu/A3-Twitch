@@ -1,0 +1,606 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<title>A3 (Peakr) — Présentation du projet</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@2.44.0/tabler-icons.min.css">
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,300&display=swap');
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --cafe: #1E1A18;
+    --cafe-mid: #2E2520;
+    --cafe-light: #3D3028;
+    --orange: #C8512A;
+    --orange-warm: #D4683E;
+    --orange-glow: rgba(200, 81, 42, 0.35);
+    --floral: #F5F0E8;
+    --floral-soft: rgba(245, 240, 232, 0.85);
+    --floral-ghost: rgba(245, 240, 232, 0.12);
+    --floral-glass: rgba(245, 240, 232, 0.06);
+    --glass-border: rgba(245, 240, 232, 0.18);
+    --glass-border-strong: rgba(245, 240, 232, 0.28);
+    --font-display: 'Syne', sans-serif;
+    --font-body: 'DM Sans', sans-serif;
+  }
+
+  html { scroll-behavior: smooth; }
+
+  body {
+    font-family: var(--font-body);
+    background: var(--cafe);
+    color: var(--floral);
+    min-height: 100vh;
+    overflow-x: hidden;
+    position: relative;
+    font-size: 14.5px;
+    line-height: 1.7;
+  }
+
+  .aurora-bg { position: fixed; inset: 0; z-index: 0; overflow: hidden; pointer-events: none; }
+  .aurora-blob { position: absolute; border-radius: 50%; filter: blur(90px); animation: drift 10s ease-in-out infinite alternate; }
+  .blob-1 { width: 560px; height: 440px; background: radial-gradient(ellipse, rgba(200,81,42,0.40) 0%, transparent 70%); top: -140px; left: -100px; animation-delay: 0s; }
+  .blob-2 { width: 460px; height: 400px; background: radial-gradient(ellipse, rgba(200,81,42,0.25) 0%, transparent 70%); bottom: -80px; right: -100px; animation-delay: -3s; }
+  .blob-3 { width: 380px; height: 340px; background: radial-gradient(ellipse, rgba(245,240,232,0.06) 0%, transparent 70%); top: 45%; left: 50%; animation-delay: -5s; }
+  @keyframes drift {
+    0%   { transform: translate(0, 0) scale(1); }
+    33%  { transform: translate(30px, -20px) scale(1.05); }
+    66%  { transform: translate(-15px, 25px) scale(0.97); }
+    100% { transform: translate(20px, -10px) scale(1.02); }
+  }
+
+  .layout { display: flex; position: relative; z-index: 1; min-height: 100vh; }
+
+  .sidebar {
+    width: 240px;
+    height: 100vh;
+    position: fixed;
+    top: 0; left: 0;
+    background: rgba(30, 26, 24, 0.65);
+    backdrop-filter: blur(24px) saturate(1.4);
+    -webkit-backdrop-filter: blur(24px) saturate(1.4);
+    border-right: 0.5px solid var(--glass-border);
+    display: flex;
+    flex-direction: column;
+    padding: 26px 14px;
+    flex-shrink: 0;
+    overflow-y: auto;
+    z-index: 5;
+  }
+
+  .logo { font-family: var(--font-display); font-size: 16px; font-weight: 700; letter-spacing: 0.04em; color: var(--floral); padding: 0 8px 8px; display: flex; align-items: center; gap: 10px; }
+  .logo-dot { width: 8px; height: 8px; background: var(--orange); border-radius: 50%; box-shadow: 0 0 8px var(--orange-glow); flex-shrink: 0; }
+  .logo-sub { font-size: 10.5px; color: rgba(245,240,232,0.4); padding: 0 8px 24px; font-weight: 300; letter-spacing: 0.02em; }
+
+  .nav-section { font-size: 10px; font-weight: 500; letter-spacing: 0.12em; color: rgba(245,240,232,0.35); text-transform: uppercase; padding: 0 8px; margin: 18px 0 8px; }
+
+  .nav-item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 9px 10px; border-radius: 10px;
+    font-size: 12.5px; font-weight: 400; color: rgba(245,240,232,0.65);
+    cursor: pointer; transition: all 0.2s ease; margin-bottom: 2px;
+    text-decoration: none;
+  }
+  .nav-item i { font-size: 15px; flex-shrink: 0; color: rgba(245,240,232,0.4); }
+  .nav-item:hover { background: var(--floral-glass); color: var(--floral); }
+  .nav-item .n { width: 18px; height: 18px; border-radius: 50%; background: rgba(245,240,232,0.08); font-size: 10px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; color: rgba(245,240,232,0.5); }
+
+  .sidebar-footer { margin-top: auto; padding-top: 18px; border-top: 0.5px solid var(--glass-border); }
+  .palette-chip { display: flex; align-items: center; gap: 8px; padding: 6px 8px; font-size: 10.5px; color: rgba(245,240,232,0.45); }
+  .swatch { width: 12px; height: 12px; border-radius: 3px; flex-shrink: 0; border: 0.5px solid var(--glass-border); }
+
+  .main { flex: 1; margin-left: 240px; padding: 40px 48px 90px; min-width: 0; max-width: 980px; }
+
+  .topbar { margin-bottom: 30px; }
+  .eyebrow { text-transform: uppercase; letter-spacing: 0.16em; font-size: 11px; font-weight: 600; color: var(--orange-warm); margin-bottom: 10px; display: flex; align-items: center; gap: 8px; }
+  .page-title { font-family: var(--font-display); font-size: 38px; font-weight: 700; color: var(--floral); letter-spacing: -0.01em; }
+  .page-title span { color: var(--orange-warm); }
+  .page-subtitle { font-size: 14.5px; color: rgba(245,240,232,0.5); margin-top: 8px; font-weight: 300; max-width: 640px; }
+
+  .glass-card {
+    background: rgba(30, 26, 24, 0.55);
+    backdrop-filter: blur(20px) saturate(1.3);
+    -webkit-backdrop-filter: blur(20px) saturate(1.3);
+    border: 0.5px solid var(--glass-border);
+    border-radius: 16px;
+    padding: 26px 28px;
+    position: relative;
+    overflow: hidden;
+    margin-bottom: 20px;
+  }
+  .glass-card::before {
+    content: ''; position: absolute; top: 0; left: 0; right: 0; height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(245,240,232,0.18), transparent);
+  }
+
+  .stat-card.featured {
+    background: rgba(200, 81, 42, 0.14);
+    border-color: rgba(200, 81, 42, 0.35);
+    font-family: var(--font-display);
+    font-size: 19px;
+    font-weight: 500;
+    line-height: 1.5;
+    color: var(--floral);
+  }
+  .stat-card.featured strong { color: #F07A52; }
+
+  .note-card {
+    background: var(--floral-glass);
+    border: 0.5px solid var(--glass-border);
+    font-size: 12.5px;
+    color: rgba(245,240,232,0.6);
+    font-weight: 300;
+    padding: 16px 20px;
+  }
+
+  .card-header { display: flex; align-items: center; gap: 12px; margin-bottom: 18px; }
+  .card-badge { width: 30px; height: 30px; border-radius: 9px; background: rgba(200,81,42,0.2); border: 0.5px solid rgba(200,81,42,0.4); color: var(--orange-warm); display: flex; align-items: center; justify-content: center; font-family: var(--font-display); font-size: 13px; font-weight: 700; flex-shrink: 0; }
+  .card-title { font-family: var(--font-display); font-size: 19px; font-weight: 600; color: var(--floral); }
+  .card-title code { font-size: 0.7em; }
+
+  h3.sub-title { font-family: var(--font-display); font-size: 14.5px; font-weight: 600; color: var(--orange-warm); margin: 22px 0 10px; letter-spacing: 0.01em; }
+  h3.sub-title:first-child { margin-top: 0; }
+
+  p { margin: 10px 0; color: rgba(245,240,232,0.8); font-weight: 300; }
+  strong { color: var(--floral); font-weight: 500; }
+  em { color: rgba(245,240,232,0.7); }
+
+  code {
+    font-family: "Cascadia Code", "Consolas", "Courier New", monospace;
+    background: rgba(245,240,232,0.08);
+    padding: 1px 6px;
+    border-radius: 5px;
+    font-size: 0.87em;
+    color: #F0A57E;
+    border: 0.5px solid var(--glass-border);
+  }
+
+  pre {
+    font-family: "Cascadia Code", "Consolas", "Courier New", monospace;
+    background: rgba(0,0,0,0.28);
+    border: 0.5px solid var(--glass-border);
+    border-radius: 10px;
+    padding: 16px 18px;
+    overflow-x: auto;
+    font-size: 12.5px;
+    line-height: 1.6;
+    color: #E8DFD3;
+    margin: 12px 0;
+  }
+  pre code { background: none; border: none; padding: 0; color: inherit; }
+
+  .diagram {
+    background: rgba(0,0,0,0.32);
+    border: 0.5px solid var(--glass-border);
+    border-radius: 12px;
+    padding: 24px 26px;
+    font-family: "Cascadia Code", "Consolas", "Courier New", monospace;
+    font-size: 12px;
+    line-height: 1.7;
+    overflow-x: auto;
+    white-space: pre;
+    color: rgba(245,240,232,0.85);
+  }
+  .diagram .hl { color: var(--orange-warm); font-weight: 600; }
+
+  ul, ol { padding-left: 20px; margin: 10px 0; }
+  li { margin: 7px 0; color: rgba(245,240,232,0.8); font-weight: 300; }
+  li strong { color: var(--floral); }
+  li::marker { color: var(--orange-warm); }
+
+  table { border-collapse: collapse; width: 100%; margin: 14px 0 8px; font-size: 12.8px; }
+  th { font-size: 10.5px; font-weight: 500; color: rgba(245,240,232,0.4); letter-spacing: 0.06em; text-transform: uppercase; padding: 0 12px 12px 0; text-align: left; border-bottom: 0.5px solid var(--glass-border); }
+  td { padding: 12px 12px 12px 0; border-bottom: 0.5px solid rgba(245,240,232,0.06); vertical-align: top; color: rgba(245,240,232,0.78); font-weight: 300; }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { color: var(--floral); }
+  td strong { color: var(--orange-warm); font-weight: 600; }
+
+  .why {
+    display: flex; gap: 14px;
+    background: rgba(200, 81, 42, 0.1);
+    border: 0.5px solid rgba(200, 81, 42, 0.3);
+    border-radius: 12px;
+    padding: 16px 18px;
+    margin: 16px 0;
+  }
+  .why-icon {
+    width: 30px; height: 30px; border-radius: 8px;
+    background: rgba(200,81,42,0.22); color: var(--orange-warm);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 15px; flex-shrink: 0;
+  }
+  .why-body { flex: 1; }
+  .why .label { font-family: var(--font-display); font-weight: 700; color: #F07A52; display: block; margin-bottom: 5px; font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.06em; }
+  .why p { margin: 0; font-size: 13px; color: rgba(245,240,232,0.75); }
+
+  .pill { display: inline-flex; align-items: center; font-size: 10px; font-weight: 500; padding: 3px 9px; border-radius: 20px; background: rgba(245,240,232,0.06); color: rgba(245,240,232,0.45); border: 0.5px solid var(--glass-border); margin-right: 6px; }
+  .pill.o { background: rgba(200,81,42,0.2); color: #F07A52; border-color: rgba(200,81,42,0.3); }
+
+  .limits-grid { display: grid; gap: 12px; }
+  .limit-item { display: flex; gap: 14px; background: var(--floral-glass); border: 0.5px solid var(--glass-border); border-radius: 12px; padding: 15px 18px; }
+  .limit-icon { width: 28px; height: 28px; border-radius: 8px; background: rgba(245,240,232,0.08); color: rgba(245,240,232,0.55); display: flex; align-items: center; justify-content: center; font-size: 14px; flex-shrink: 0; }
+  .limit-item p { margin: 0; font-size: 13px; }
+
+  hr.sep { border: none; border-top: 0.5px solid var(--glass-border); margin: 8px 0 28px; }
+
+  .footer { margin-top: 50px; padding-top: 20px; border-top: 0.5px solid var(--glass-border); font-size: 11px; color: rgba(245,240,232,0.3); text-align: center; font-weight: 300; letter-spacing: 0.02em; }
+
+  ::selection { background: rgba(200,81,42,0.4); color: var(--floral); }
+
+  @media (max-width: 900px) {
+    .sidebar { display: none; }
+    .main { margin-left: 0; padding: 28px 20px 70px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="aurora-bg">
+  <div class="aurora-blob blob-1"></div>
+  <div class="aurora-blob blob-2"></div>
+  <div class="aurora-blob blob-3"></div>
+</div>
+
+<div class="layout">
+
+  <aside class="sidebar">
+    <div class="logo"><div class="logo-dot"></div>A3 / PEAKR</div>
+    <div class="logo-sub">Documentation technique</div>
+
+    <span class="nav-section">Sommaire</span>
+    <a href="#pipeline" class="nav-item"><span class="n">•</span>Pipeline</a>
+    <a href="#s1" class="nav-item"><span class="n">1</span>Détection — filtres</a>
+    <a href="#s2" class="nav-item"><span class="n">2</span>Le cerveau (Brain)</a>
+    <a href="#s3" class="nav-item"><span class="n">3</span>Capture vidéo</a>
+    <a href="#s4" class="nav-item"><span class="n">4</span>Revue Discord</a>
+    <a href="#s5" class="nav-item"><span class="n">5</span>Données &amp; vie privée</a>
+    <a href="#s6" class="nav-item"><span class="n">6</span>Déploiement</a>
+    <a href="#s7" class="nav-item"><span class="n">7</span>Limites</a>
+
+    <div class="sidebar-footer">
+      <div class="palette-chip"><div class="swatch" style="background:#1E1A18"></div>Marron grain de café</div>
+      <div class="palette-chip"><div class="swatch" style="background:#C8512A"></div>Orange déssaturé</div>
+      <div class="palette-chip"><div class="swatch" style="background:#F5F0E8"></div>Blanc floral</div>
+    </div>
+  </aside>
+
+  <main class="main">
+
+    <div class="topbar">
+      <div class="eyebrow"><i class="ti ti-brand-twitch" aria-hidden="true"></i> Documentation projet</div>
+      <div class="page-title">A3 <span>(Peakr)</span></div>
+      <div class="page-subtitle">Système de détection et de capture automatique de clips Twitch — présentation
+      technique pour un collaborateur ou partenaire qui rejoint le projet sans avoir lu le code.</div>
+    </div>
+
+    <div class="glass-card note-card">
+      Toutes les valeurs citées (seuils, poids, délais, tailles) sont reprises telles quelles du code source —
+      aucune n'est estimée ou arrondie de tête.
+    </div>
+
+    <div class="glass-card stat-card featured">
+      A3 est un bot qui surveille en continu le chat Twitch d'un ou plusieurs streamers, détecte automatiquement
+      les moments de hype à partir du <strong>texte du chat uniquement</strong> (aucune analyse vidéo ou audio)
+      via six filtres statistiques adaptatifs, capture rétroactivement le clip vidéo correspondant, et le soumet
+      à une revue humaine sur Discord avant classement.
+    </div>
+
+    <div id="pipeline" class="glass-card">
+      <div class="card-header">
+        <div class="card-badge"><i class="ti ti-route" aria-hidden="true"></i></div>
+        <div class="card-title">Pipeline de bout en bout</div>
+      </div>
+      <div class="diagram">Chat Twitch (par message)
+      │
+      ▼
+<span class="hl">Watcher</span> ── passe le message à 6 filtres adaptatifs (Welford, par channel)
+      │      MessageRate · UniqueAuthors · Emotions · EmoteDensity · Repetition · ClipActivity
+      │      → chaque filtre retourne un score gradué 0.0–1.0
+      ▼
+<span class="hl">Brain</span> ── agrège les scores pondérés (mémoire glissante 45s) et compare au seuil
+      │      score_final >= 0.42 ET au moins un filtre "volume" actif → clip
+      │      merge / dedup / cooldown adaptatif filtrent les faux doublons
+      ▼
+<span class="hl">StreamCapture</span> ── ffmpeg découpe le clip depuis un buffer vidéo circulaire (rétroactif)
+      │      → 1 clip HQ + 1 aperçu compressé (limite Discord 8 Mo)
+      ▼
+<span class="hl">Renderer</span> ── poste le clip sur Discord avec 3 boutons de revue humaine
+      │      ✅ Garder · ⭐ Highlight · 🗑️ Supprimer (+ raison sélectionnée dans un menu)
+      ▼
+<span class="hl">PostgreSQL</span> ── historique complet (sessions, clips, reviews, fenêtres de chat, snapshots)
+             pseudonymisé — pensé comme dataset pour un futur réentraînement des poids</div>
+      <p style="margin-top:16px">Un <code>Watcher</code>, un <code>Brain</code>, un <code>StreamCapture</code> et
+      un <code>DecisionLogger</code> tournent <strong>par channel surveillé</strong> (statistiques Welford, buffer
+      vidéo et numérotation de clips isolés channel par channel) ; un seul <code>Renderer</code> (bot Discord) et
+      un seul <code>StructuredLogger</code>/connexion PostgreSQL sont partagés entre tous les channels. Les channels
+      surveillés sont définis par la variable d'environnement <code>CHANNELS</code> (actuellement configurée en prod
+      avec 3 channels, ex. <code>jltomy, anyme023, inoxtag</code>).</p>
+    </div>
+
+    <!-- SECTION 1 -->
+    <div id="s1" class="glass-card">
+      <div class="card-header">
+        <div class="card-badge">1</div>
+        <div class="card-title">Détection — les 6 filtres adaptatifs <code>Watcher</code></div>
+      </div>
+
+      <p>Chaque message de chat est passé à travers 6 filtres, un par instance de channel. Cinq d'entre eux
+      héritent de la même classe de base <code>FiltreAdaptatif</code> (<code>watcherFiltreBase.py</code>) et
+      partagent un mécanisme commun ; <code>ClipActivity</code> est indépendant car il ne réagit pas au chat mais
+      à un polling externe.</p>
+
+      <h3 class="sub-title">Le mécanisme commun : seuil adaptatif à double fenêtre de Welford</h3>
+      <p>Plutôt qu'un seuil fixe (« plus de X messages/10s = pic »), chaque filtre calcule sa propre moyenne et son
+      écart-type <strong>en ligne</strong> (algorithme de Welford, sans reparcourir l'historique à chaque message)
+      sur deux fenêtres glissantes simultanées :</p>
+      <ul>
+        <li>une fenêtre courte : <code>fenetre_welford = 300s</code> (5 min) — la baseline « récente » ;</li>
+        <li>une fenêtre longue : <code>fenetre_fond = fenetre_welford × 4 = 1200s</code> (20 min) — le « fond » de l'activité du chat.</li>
+      </ul>
+      <p>Un pic est retenu seulement si les <strong>deux</strong> conditions suivantes sont vraies : <code>z_score</code>
+      local ≥ <code>1.8</code> par rapport à la fenêtre courte, et le signal brut dépasse <code>ratio_fond_min = 1.3</code>
+      fois la moyenne de la fenêtre longue. Le pic doit ensuite tenir au moins <code>duree_min_pic = 1.5s</code>, et
+      un filtre ne peut se redéclencher que si <code>cooldown = 45s</code> se sont écoulées depuis son dernier
+      déclenchement. Un filtre calibre ses statistiques sur ses <strong>50 premiers échantillons</strong>
+      (<code>min_samples = 50</code>) avant de pouvoir se déclencher.</p>
+
+      <div class="why">
+        <div class="why-icon"><i class="ti ti-bulb" aria-hidden="true"></i></div>
+        <div class="why-body">
+          <span class="label">Pourquoi une double fenêtre plutôt qu'une seule ?</span>
+          <p>Une seule fenêtre glissante absorbe progressivement un pic d'activité durable (un raid Twitch, par
+          exemple) comme sa nouvelle normalité — au bout de quelques minutes, le chat déchaîné devient la baseline,
+          et plus rien ne semble être un pic. La fenêtre longue sert de garde-fou : même si la fenêtre courte s'est
+          laissée « polluer » par un raid, le signal doit rester significativement au-dessus du fond de 20 minutes
+          pour compter comme un vrai pic.</p>
+        </div>
+      </div>
+
+      <p>Chaque filtre retourne un <strong>score gradué entre 0.0 et 1.0</strong> plutôt qu'un booléen : 0 sous le
+      seuil, et une intensité proportionnelle à l'écart au-dessus du seuil z, plafonnée à 1.0 au double du seuil
+      (<code>intensite = (z_actuel - z_score) / z_score</code>, bornée à [0, 1]).</p>
+
+      <h3 class="sub-title">Les 6 filtres</h3>
+      <table>
+        <thead><tr><th>Filtre</th><th>Signal mesuré</th><th>Paramètres propres</th><th>Détecte</th></tr></thead>
+        <tbody>
+          <tr><td><strong>MessageRate</strong></td><td>Messages sur une fenêtre glissante de <code>10s</code></td><td>—</td><td>Un pic de vélocité brute du chat</td></tr>
+          <tr><td><strong>UniqueAuthors</strong></td><td>Auteurs distincts sur <code>10s</code>, + « lurkers » qui reprennent la parole</td><td><code>quota_spam = 3</code> : au-delà, un même auteur ne compte plus (anti-spam)</td><td>Un afflux réel de viewers, pas 2-3 personnes qui spamment</td></tr>
+          <tr><td><strong>Emotions</strong></td><td>Proportion de mots matchant 6 classes regex (drole, rage, hype, choc, tristesse, raid) + emojis</td><td>~40 patterns regex répartis sur les 6 classes</td><td>Le ton émotionnel dominant du chat</td></tr>
+          <tr><td><strong>EmoteDensity</strong></td><td>Ratio emotes/mots par message, moyenné sur <code>10s</code></td><td><code>seuil_absolu = 0.08</code> ; emotes Twitch/BTTV/FFZ/7TV, cache <code>1h</code></td><td>Le spam d'emotes typique d'un moment hype</td></tr>
+          <tr><td><strong>Repetition</strong></td><td>Fréquence du mot le plus répété sur <code>10s</code> (hors mots vides/blacklist)</td><td><code>longueur_min_mot = 2</code></td><td>Le chat qui répète tous le même mot</td></tr>
+          <tr><td><strong>ClipActivity</strong></td><td>Polling API Twitch (<code>/helix/clips</code>) toutes les <code>30s</code></td><td><code>seuil_clips = 1</code> clip / <code>90s</code> → score 1.0 ; <code>cooldown = 60s</code></td><td>Les viewers qui se clippent déjà eux-mêmes le moment</td></tr>
+        </tbody>
+      </table>
+      <p><code>ClipActivity</code> est binaire (0.0 ou 1.0) et n'hérite pas de <code>FiltreAdaptatif</code> — simple
+      compteur de clips récents via l'API Twitch, pas de baseline à calibrer.</p>
+
+      <p>Le <code>Watcher</code> journalise aussi deux flux agrégés, indépendamment de la détection de clip :
+      des <strong>fenêtres de chat</strong> de <code>60s</code> (<code>FENETRE_CHAT_SEC</code>, dataset pour un
+      futur entraînement supervisé) et des <strong>snapshots</strong> d'état toutes les <code>300s</code>
+      (<code>INTERVALLE_SNAPSHOT_SEC</code>, pour un futur dashboard de monitoring).</p>
+    </div>
+
+    <!-- SECTION 2 -->
+    <div id="s2" class="glass-card">
+      <div class="card-header">
+        <div class="card-badge">2</div>
+        <div class="card-title">Le cerveau — de « pic » à « décision » <code>Brain</code></div>
+      </div>
+
+      <h3 class="sub-title">Score pondéré</h3>
+      <pre><code>POIDS_FILTRES = {
+    "FiltreMessageRate":   0.20,
+    "FiltreUniqueAuthors": 0.20,
+    "FiltreEmotions":      0.35,
+    "FiltreEmoteDensity":  0.20,
+    "FiltreRepetition":    0.12,
+    "FiltreClipActivity":  0.30,
+}
+SEUIL_CLIP = 0.42</code></pre>
+      <p>Ces poids <strong>ne somment pas à 1</strong> (total 1.37) — ce sont des multiplicateurs indépendants
+      appliqués à des scores qui peuvent se cumuler, pas une distribution de probabilité. Un clip se déclenche
+      quand <code>score_final >= 0.42</code>.</p>
+
+      <h3 class="sub-title">Mémoire glissante de 45 secondes</h3>
+      <p>Les filtres ne réagissent pas tous à la même milliseconde sur un vrai moment fort. Le <code>Brain</code>
+      retient donc le score de chaque filtre pendant <code>fenetre_memoire_sec = 45s</code> après son dernier
+      déclenchement, et recalcule le score final en sommant tous les filtres encore « actifs » dans cette fenêtre —
+      plutôt que d'évaluer chaque message isolément.</p>
+      <div class="glass-card note-card" style="margin:14px 0 0">
+        Note : un utilitaire séparé, <code>test_filtres_live.py</code> — un dashboard de test en conditions
+        réelles, pas un test automatisé — implémente une classe <code>FenetreCoincidence</code> (fenêtre de 25s)
+        pour la même idée. Ce n'est pas le mécanisme utilisé en production : le <code>Brain</code> réel utilise la
+        mémoire glissante de 45s décrite ci-dessus.
+      </div>
+
+      <h3 class="sub-title">Garde-fou « volume »</h3>
+      <pre><code>FILTRES_VOLUME = {"FiltreMessageRate", "FiltreUniqueAuthors", "FiltreClipActivity"}</code></pre>
+      <p>Un clip ne peut jamais se déclencher sur la seule base d'un signal qualitatif (Emotions, EmoteDensity,
+      Repetition) : il faut qu'au moins un filtre de volume ait aussi réagi.</p>
+
+      <h3 class="sub-title">Déduplication (60s)</h3>
+      <p>Un hash MD5 tronqué (auteur + combinaison triée des filtres actifs) est retenu pendant
+      <code>_fenetre_dedup_sec = 60s</code>. Si le même hash réapparaît, le déclenchement est rejeté comme doublon.</p>
+
+      <h3 class="sub-title">Fenêtre de merge (150s) et cooldown adaptatif</h3>
+      <pre><code>MERGE_WINDOW_SEC = 150
+COOLDOWN_MIN_SEC = 120
+COOLDOWN_MAX_SEC = 480
+
+ratio = min((score - seuil) / (1.0 - seuil), 1.0)
+cooldown = COOLDOWN_MIN_SEC + ratio * (COOLDOWN_MAX_SEC - COOLDOWN_MIN_SEC)</code></pre>
+      <p>Si un nouveau pic survient dans les 150s suivant le clip précédent et qu'il est au moins aussi fort, il
+      <strong>remplace</strong> le clip précédent (l'ancien message Discord est supprimé et remplacé) plutôt que
+      de créer un doublon. Passé la fenêtre de merge, le prochain clip attend un cooldown entre 120s et 480s,
+      proportionnel à l'intensité du score précédent.</p>
+
+      <div class="why">
+        <div class="why-icon"><i class="ti ti-bulb" aria-hidden="true"></i></div>
+        <div class="why-body">
+          <span class="label">Pourquoi adaptatif plutôt que fixe ?</span>
+          <p>Un clip qui a tout juste dépassé le seuil ne « consomme » que 120s de silence ; un clip énorme
+          (score proche de 1.0) réserve jusqu'à 480s, sur l'hypothèse qu'un moment aussi fort est suivi d'une
+          retombée progressive du chat qu'il ne sert à rien de re-clipper immédiatement.</p>
+        </div>
+      </div>
+
+      <h3 class="sub-title">Format vidéo « élastique » façon TikTok</h3>
+      <pre><code>DECALAGE_RECORD_AVANT_SEC = 45.0   # début du clip = 45s AVANT le déclenchement
+DUREE_ATTENTE_HYPE_SEC    = 15.0   # prolongation après chaque nouveau pic
+DUREE_MIN_TIKTOK_SEC      = 65.0   # durée plancher du clip final</code></pre>
+      <p>Grâce au buffer vidéo circulaire (§3), l'enregistrement démarre <strong>rétroactivement</strong> 45s avant
+      le déclenchement. Tant que le score reste au-dessus du seuil, la fin recule de 15s à chaque nouveau pic
+      (plafond dur de 5 min). Si la durée finale est inférieure à 65s, le début est reculé pour l'atteindre —
+      pensé pour la republication TikTok/Shorts.</p>
+    </div>
+
+    <!-- SECTION 3 -->
+    <div id="s3" class="glass-card">
+      <div class="card-header">
+        <div class="card-badge">3</div>
+        <div class="card-title">Capture vidéo <code>StreamCapture</code></div>
+      </div>
+      <pre><code>BUFFER_DUREE_MAX_SEC = 600   # 10 min de buffer glissant
+DUREE_SEGMENT_SEC    = 30
+DELAI_CHAT_VIDEO_SEC = 8
+QUALITE_STREAM = "480p,480p30,360p,360p30"</code></pre>
+      <p><code>streamlink</code> capture en continu le flux Twitch, et <code>ffmpeg</code> (<code>-c copy</code>,
+      sans réencodage) découpe ce flux en segments de 30s. Un buffer circulaire en mémoire référence les 10
+      dernières minutes de segments ; les plus anciens sont supprimés au fur et à mesure. C'est ce tampon qui
+      permet le clip <strong>rétroactif</strong> : au moment où le <code>Brain</code> décide de clipper, les 45
+      dernières secondes existent déjà physiquement sur disque.</p>
+      <p><code>DELAI_CHAT_VIDEO_SEC = 8</code> compense le décalage naturel entre l'arrivée d'un message de chat et
+      l'affichage de l'instant correspondant dans le flux vidéo (latence de diffusion Twitch).</p>
+      <p>Au découpage, deux fichiers sont générés en parallèle : un clip HQ (copie directe, sans perte), et un
+      aperçu compressé (<code>scale=-2:360</code>, H.264 <code>crf 32</code>, bitrate plafonné à <code>600k</code>)
+      dimensionné pour la limite d'upload Discord de <strong>8 Mo</strong>.</p>
+    </div>
+
+    <!-- SECTION 4 -->
+    <div id="s4" class="glass-card">
+      <div class="card-header">
+        <div class="card-badge">4</div>
+        <div class="card-title">Revue humaine sur Discord <code>Renderer</code></div>
+      </div>
+      <p>Chaque clip généré est posté avec l'aperçu vidéo et trois boutons :
+      <span class="pill o">✅ Garder</span><span class="pill o">⭐ Highlight</span><span class="pill o">🗑️ Supprimer</span>
+      Cliquer un bouton ouvre un <strong>menu déroulant de raisons</strong> plutôt que d'appliquer immédiatement la
+      décision — un choix structuré, agrégeable en SQL, plutôt qu'un champ libre inexploitable.</p>
+      <p>Une fois la raison connue, le fichier vidéo est <strong>déplacé physiquement</strong> vers
+      <code>clips/{channel}/{validated|highlights|rejected}/</code>, et la décision (+ raison + latence de
+      réaction) est journalisée dans <code>decisions/{channel}/session_*.json</code> et en base PostgreSQL.</p>
+
+      <h3 class="sub-title">Robustesse de la file de revue</h3>
+      <ul>
+        <li><strong>Persistance</strong> (<code>pending_reviews.json</code>) — les clips en attente et leurs boutons survivent à un redémarrage du bot.</li>
+        <li><strong>Rappel</strong> après <code>1800s</code> (30 min) sans décision.</li>
+        <li><strong>Auto-expiration</strong> après <code>86400s</code> (24h) : classé « rejeté », raison <code>timeout_sans_review</code>.</li>
+        <li><strong>Timeout de raison</strong> : bouton cliqué sans raison choisie → finalisation forcée après <code>900s</code> (15 min), raison <code>non_precisee_auto</code>.</li>
+        <li><strong>Accès restreignable</strong> via <code>DISCORD_ALLOWED_USERS</code> — vide par défaut = accès non restreint (le code logue un avertissement explicite).</li>
+        <li><strong>Merges</strong> : l'ancien message Discord est supprimé avant l'envoi du nouveau, pour éviter des boutons pointant vers un clip déjà écrasé.</li>
+      </ul>
+      <p>Un <strong>bilan de session</strong> (durée, clips, taux de validation, scores, filtres les plus actifs,
+      répartition par heure) est posté sur Discord à l'arrêt du bot.</p>
+    </div>
+
+    <!-- SECTION 5 -->
+    <div id="s5" class="glass-card">
+      <div class="card-header">
+        <div class="card-badge">5</div>
+        <div class="card-title">Données &amp; vie privée</div>
+      </div>
+      <p>Tous les identifiants utilisateurs sont <strong>pseudonymisés avant tout stockage</strong>, en base comme
+      dans les logs structurés :</p>
+      <pre><code>hashlib.sha256(f"{A3_HASH_SALT}:{value}".encode()).hexdigest()[:16]</code></pre>
+      <p>Un hash SHA-256 tronqué à 16 caractères, salé avec <code>A3_HASH_SALT</code> — secret propre à chaque
+      déploiement, jamais commité. La fonction lève une erreur explicite si le salt n'est pas défini plutôt que de
+      silencieusement stocker en clair. Les identifiants Discord bruts ne sont <strong>jamais</strong> stockés :
+      <code>user_id: 0</code> est forcé en dur, seul le hash du pseudo est conservé.</p>
+      <p>A3 journalise aussi en continu un <strong>dataset structuré</strong>, pensé comme matière première pour un
+      futur réajustement des poids/seuils :</p>
+      <ul>
+        <li><code>filter_events</code> — chaque déclenchement de filtre, partitionné par mois ;</li>
+        <li><code>chat_windows</code> — fenêtres de 60s agrégées, avec ou sans clip déclenché ;</li>
+        <li><code>snapshots</code> — état périodique toutes les 5 min ;</li>
+        <li><code>clips</code> / <code>reviews</code> / <code>sessions</code> — cycle de vie complet, avec métadonnées Twitch (viewer count, catégorie, langue).</li>
+      </ul>
+    </div>
+
+    <!-- SECTION 6 -->
+    <div id="s6" class="glass-card">
+      <div class="card-header">
+        <div class="card-badge">6</div>
+        <div class="card-title">Déploiement &amp; fiabilité</div>
+      </div>
+      <ul>
+        <li><strong>Docker</strong> — conteneur unique <code>network_mode: host</code> (nécessaire pour <code>streamlink</code>), <code>restart: unless-stopped</code>, volumes persistants séparés par usage.</li>
+        <li><strong>PostgreSQL</strong> — seul moteur supporté. <code>PostgresHandler</code> crée et migre son propre schéma à la connexion (tables, index, partitions mensuelles). Le README mentionne un <code>sql/schema_postgresql.sql</code> canonique, absent de cette copie du dépôt.</li>
+        <li><strong>Écriture asynchrone</strong> — events en file (max 20000), insérés par lots de 100 (ou toutes les 5s) par un thread worker dédié ; chaque insertion isolée dans un <code>SAVEPOINT</code>.</li>
+        <li><strong>Rétention disque</strong>, appliquée toutes les heures : clips non reviewés/rejetés purgés après <strong>2 jours</strong> ; clips gardés/highlightés conservés <strong>30 jours</strong>.</li>
+      </ul>
+
+      <div class="why">
+        <div class="why-icon"><i class="ti ti-alert-triangle" aria-hidden="true"></i></div>
+        <div class="why-body">
+          <span class="label">Pourquoi cette distinction 2j / 30j ?</span>
+          <p>Un commentaire dans <code>decisions.py</code> documente un incident réel : appliquer la même rétention
+          courte aux clips gardés qu'aux clips rejetés a entraîné la suppression définitive des 5 seuls clips
+          « garder »/« highlight » alors en base. <code>KEPT_RETENTION_DAYS</code> corrige ce comportement tout en
+          bornant la durée de vie (pas de croissance disque non bornée).</p>
+        </div>
+      </div>
+
+      <ul>
+        <li><strong>Sessions orphelines</strong> — une session <code>active</code> de plus de 12h (process tué sans arrêt propre) est refermée automatiquement comme <code>interrupted</code> au redémarrage.</li>
+        <li><strong>CI GitHub Actions</strong> — <code>ruff</code>, <code>mypy</code>, <code>pytest</code> à chaque push/PR sur <code>main</code>.</li>
+      </ul>
+    </div>
+
+    <!-- SECTION 7 -->
+    <div id="s7" class="glass-card">
+      <div class="card-header">
+        <div class="card-badge"><i class="ti ti-flag" aria-hidden="true"></i></div>
+        <div class="card-title">Ce que le projet ne fait pas (encore)</div>
+      </div>
+      <div class="limits-grid">
+        <div class="limit-item">
+          <div class="limit-icon"><i class="ti ti-video-off" aria-hidden="true"></i></div>
+          <p><strong>Aucune analyse vidéo ou audio</strong> — détection 100&nbsp;% basée sur le texte du chat. Un moment fort mais silencieux dans le chat ne sera pas détecté.</p>
+        </div>
+        <div class="limit-item">
+          <div class="limit-icon"><i class="ti ti-test-pipe-off" aria-hidden="true"></i></div>
+          <p><strong>Pas de tests automatisés branchés sur la CI</strong> — <code>pyproject.toml</code> et la CI référencent un dossier <code>tests/</code> à la racine qui n'existe pas dans cette copie. Le seul fichier apparenté (<code>test_filtres_live.py</code>) est un dashboard de calibration live, pas une suite de tests unitaires.</p>
+        </div>
+        <div class="limit-item">
+          <div class="limit-icon"><i class="ti ti-adjustments-off" aria-hidden="true"></i></div>
+          <p><strong>Pas de ré-ajustement automatique des poids/seuil</strong> — <code>filter_performance</code> et <code>reviews</code> accumulent le signal nécessaire, mais rien ne l'exploite encore pour recalibrer.</p>
+        </div>
+        <div class="limit-item">
+          <div class="limit-icon"><i class="ti ti-chart-bar-off" aria-hidden="true"></i></div>
+          <p><strong>Pas de dashboard d'analyse</strong> branché sur <code>chat_windows</code>, <code>snapshots</code>, <code>filter_events</code> — les données sont collectées, leur exploitation reste à construire.</p>
+        </div>
+        <div class="limit-item">
+          <div class="limit-icon"><i class="ti ti-file-off" aria-hidden="true"></i></div>
+          <p><strong>Schéma SQL canonique absent du dépôt</strong> — référencé par le README (<code>sql/schema_postgresql.sql</code>), non présent dans cette copie ; seul le code de <code>PostgresHandler</code> fait foi.</p>
+        </div>
+        <div class="limit-item">
+          <div class="limit-icon"><i class="ti ti-database-off" aria-hidden="true"></i></div>
+          <p><strong>Un seul moteur de DB supporté</strong> — tout <code>DB_TYPE</code> autre que <code>postgres</code> fait tourner le bot sans persistance en base, silencieusement.</p>
+        </div>
+        <div class="limit-item">
+          <div class="limit-icon"><i class="ti ti-building-skyscraper" aria-hidden="true"></i></div>
+          <p><strong>Pas de multi-tenant réel</strong> — la structure DB (<code>organizations</code>, <code>org_id</code>) existe en vue d'une offre SaaS, mais tout tourne aujourd'hui sur une organisation unique <code>'default'</code>.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="footer">A3 (Peakr) — Documentation technique générée à partir d'une lecture intégrale du code source</div>
+
+  </main>
+</div>
+
+</body>
+</html>
